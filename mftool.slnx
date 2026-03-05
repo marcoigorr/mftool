@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="mftool.vcxproj" Id="0718567f-738d-493d-a2e1-00d6343c5c5b" />
+</Solution>
