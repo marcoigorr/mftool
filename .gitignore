@@ -364,4 +364,4 @@ FodyWeavers.xsd
 
 # Sensitive files - ignore keys directory except for template
 /keys/
-!keys/std.keys
+!/keys/std.keys
