@@ -1,10 +1,8 @@
 #pragma once
+#include "../core/pcsc_reader.h"
 #include <memory>
 #include <string>
 #include <vector>
-#include <cstdint>
-
-class PCSCReader;
 
 class CommandParser {
 public:
@@ -14,6 +12,9 @@ public:
     void run();
 
 private:
+    std::unique_ptr<PCSCReader> reader;
+    std::vector<std::vector<uint8_t>> keys; 
+
     bool initializeReader();
     void showHelp() const;
     
@@ -28,5 +29,12 @@ private:
      */
     void printBlockData(uint8_t blockNumber, const std::vector<uint8_t>& data);
 
-    std::unique_ptr<PCSCReader> reader;
+    // Command handlers
+    void handleAuth();
+    void handleStatus();
+    void handleInfo();
+    void handleRead(const std::string& line);
+    void handleWrite(const std::string& line);
+    void handleDump(const std::string& line);
+    void handleDumpAll();
 };

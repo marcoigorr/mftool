@@ -256,7 +256,6 @@ bool PCSCReader::tryAuthenticate(uint8_t blockNumber, const std::vector<std::vec
 
 bool PCSCReader::authenticateSector(uint8_t sector, const std::vector<std::vector<uint8_t>>& keys) {
     if (isSectorAuthenticated(sector)) {
-        Logger::debug("Sector " + std::to_string(sector) + " already authenticated");
         return true;
     }
 
@@ -264,19 +263,13 @@ bool PCSCReader::authenticateSector(uint8_t sector, const std::vector<std::vecto
     const uint8_t keyTypes[] = { 0x60, 0x61 };
     const char* keyTypeNames[] = { "Key A", "Key B" };
 
-    Logger::debug("Authenticating sector " + std::to_string(sector) + "...");
-
-    // CARICA OGNI CHIAVE UNA SOLA VOLTA
     for (size_t i = 0; i < keys.size(); i++) {
         std::string keyHex = Hex::bytesToString(keys[i]);
-        Logger::debug("Trying key #" + std::to_string(i + 1) + ": " + keyHex);
         
         if (!loadAuthenticationKey(0x00, keys[i])) {
-            Logger::warning("Failed to load key #" + std::to_string(i + 1) + ": " + keyHex);
             continue;
         }
         
-        // Prova entrambi i tipi di chiave DOPO aver caricato
         for (int typeIdx = 0; typeIdx < 2; typeIdx++) {
             uint8_t keyType = keyTypes[typeIdx];
 
@@ -338,13 +331,7 @@ void PCSCReader::clearAuthCache() {
 
 std::vector<uint8_t> PCSCReader::readBlock(uint8_t blockNumber) {
     uint8_t sector = blockNumber / 4;
-    
-    // Se il settore non è autenticato, errore
-    if (!isSectorAuthenticated(sector)) {
-        Logger::error("Sector " + std::to_string(sector) + " not authenticated. Use authenticateSector() first.");
-        return std::vector<uint8_t>();
-    }
-    
+        
     // Leggi il blocco direttamente (l'autenticazione persiste per tutto il settore)
     std::vector<uint8_t> command = { 0xFF, 0xB0, 0x00, blockNumber, 0x10 };
     auto response = transmit(command);
@@ -358,8 +345,7 @@ std::vector<uint8_t> PCSCReader::readBlock(uint8_t blockNumber) {
         if (auth.authenticated) {
             // Ri-autentica con la stessa chiave
             if (loadAuthenticationKey(0x00, auth.key) && authenticate(blockNumber, auth.keyType, 0x00)) {
-                Logger::debug("Re-authentication successful");
-                
+
                 // Riprova la lettura
                 response = transmit(command);
             } else {
@@ -372,7 +358,6 @@ std::vector<uint8_t> PCSCReader::readBlock(uint8_t blockNumber) {
 
     if (response.size() >= 2 && response[response.size() - 2] == 0x90 && response[response.size() - 1] == 0x00) {
         response.resize(response.size() - 2);
-        Logger::debug("Block " + std::to_string(blockNumber) + " read successfully");
         return response;
     }
 
@@ -413,11 +398,6 @@ bool PCSCReader::writeBlock(uint8_t blockNumber, const std::vector<uint8_t>& dat
 std::vector<uint8_t> PCSCReader::readSector(uint8_t sector) {
     std::vector<uint8_t> sectorData;
 
-    if (!isSectorAuthenticated(sector)) {
-        Logger::error("Sector " + std::to_string(sector) + " not authenticated");
-        return std::vector<uint8_t>();
-    }
-
     uint8_t firstBlock = sector * 4;
     uint8_t lastBlock = firstBlock + 3;
 
@@ -428,7 +408,6 @@ std::vector<uint8_t> PCSCReader::readSector(uint8_t sector) {
     for (uint8_t block = firstBlock; block <= lastBlock; block++) {
         auto blockData = readBlock(block);
         if (blockData.empty()) {
-            Logger::error("Failed to read block " + std::to_string(block));
             return std::vector<uint8_t>();
         }
         sectorData.insert(sectorData.end(), blockData.begin(), blockData.end());
