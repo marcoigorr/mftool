@@ -6,6 +6,7 @@
     <ClCompile Include="core\pcsc_reader.cpp" />
     <ClCompile Include="mifare\value_block.cpp" />
     <ClCompile Include="utils\atr_parser.cpp" />
+    <ClCompile Include="mifare\key_loader.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="cli\command_parser.h" />
@@ -16,6 +17,7 @@
     <ClInclude Include="utils\endian.h" />
     <ClInclude Include="utils\pcsc_utils.h" />
     <ClInclude Include="utils\atr_parser.h" />
+    <ClInclude Include="mifare\key_loader.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="keys\std.keys" />
