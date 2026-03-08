@@ -36,6 +36,19 @@ private:
     // Command handlers  (ogni handler riceve il resto della riga come stream)
     // -------------------------------------------------------------------------
 
+    // read -s <settore 0-15> [-b <blocco 0-3>]
+    //   Senza -b: tabella 4 blocchi con colori + colonna Access.
+    //   Con -b:   decodifica dettagliata del singolo blocco.
+    void cmdRead(std::istringstream& args);
+
+    // dump [-k <keyfile>] [-f mct|bin]
+    //   Legge tutti i 64 blocchi e salva in dumps/<UID>.mct (o .bin).
+    void cmdDumpFile(std::istringstream& args);
+
+    // write -s <settore 0-15> -b <blocco 0-3> -d <32 hex chars>
+    //   Scrive 16 byte. Auto-autentica tramite stato memorizzato o keyfile.
+    void cmdWrite(std::istringstream& args);
+
     // tagid
     //   Legge il Manufacturer Block (S0/B0): NUID + manufacturer data.
     //   Autentica automaticamente il settore 0 con Key A (default FFFFFFFFFFFF).
@@ -50,21 +63,13 @@ private:
     //   Mostra una tabella con le chiavi trovate per settore.
     void cmdScan(std::istringstream& args);
 
-    // read -s <settore 0-15> -b <blocco 0-3>
-    //   Legge 16 byte. Il settore deve essere autenticato (o auto-reauth).
-    void cmdRead(std::istringstream& args);
-
-    // write -s <settore 0-15> -b <blocco 0-3> -d <32 hex chars>
-    //   Scrive 16 byte. Il settore deve essere autenticato.
-    void cmdWrite(std::istringstream& args);
-
-    // dump -s <settore 0-15>
-    //   Mostra tutti i 4 blocchi del settore in formato hex + ASCII.
-    void cmdDump(std::istringstream& args);
-
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    // Tenta l'autenticazione tramite stato memorizzato (ensureAuthenticated),
+    // con fallback sulle chiavi in keys/found.keys.
+    bool autoAuth(int sector, const std::string& keyFile = "keys/found.keys");
 
     // Decodifica SW1/SW2 in una stringa leggibile (MIFARE + ISO 7816).
     static std::string decodeSW(uint8_t sw1, uint8_t sw2);

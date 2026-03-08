@@ -24,5 +24,8 @@
     <None Include="keys\std.keys" />
     <None Include="keys\Dump_3A165647.keys" />
     <None Include="keys\found.keys" />
+    <None Include="dumps\dump_3A165647.dump" />
+    <None Include="dumps\dump_3A165647_160c.dump" />
+    <None Include="dumps\dump_510c.mct" />
   </ItemGroup>
 </Project>

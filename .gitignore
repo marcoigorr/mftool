@@ -365,3 +365,6 @@ FodyWeavers.xsd
 # Sensitive files - ignore keys directory except for template
 /keys/
 !/keys/std.keys
+
+# Dump files - comment if you want to checkin dumps, but they can be very large and contain sensitive information
+/dumps/*
