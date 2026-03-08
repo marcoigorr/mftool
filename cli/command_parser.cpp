@@ -12,15 +12,37 @@
 #include <cctype>
 #include <ctime>
 
+// ============================================================================
+// SCHEMA COLORI GLOBALE - Solo per dati MIFARE
+// ============================================================================
+namespace Color {
+    constexpr const char* RESET       = "\033[0m";
+    constexpr const char* BOLD        = "\033[1m";
+    
+    // Chiavi
+    constexpr const char* KEY_A       = "\033[92m";  // Verde chiaro
+    constexpr const char* KEY_B       = "\033[32m";  // Verde scuro
+    
+    // Access Bits
+    constexpr const char* ACCESS_BITS = "\033[38;5;208m";  // Arancione
+    
+    // Blocchi
+    constexpr const char* VALUE_BLOCK = "\033[33m";  // Giallo scuro
+    constexpr const char* DATA_BLOCK  = "\033[0m";   // Nessun colore
+    
+    // Manufacturer Block
+    constexpr const char* UID         = "\033[96m";  // Ciano
+    constexpr const char* MFR_DATA    = "\033[95m";  // Magenta/Fucsia
+    
+    // Dettagli (grigio chiaro per info secondarie)
+    constexpr const char* GRAY        = "\033[90m";
+}
+
 CommandParser::CommandParser()  = default;
 CommandParser::~CommandParser() = default;
 
 // ---------------------------------------------------------------------------
 // decodeSW
-//
-// Traduce SW1/SW2 in un messaggio leggibile.
-// Copre i codici standard ISO 7816 e quelli specifici MIFARE / ACR122U.
-// Riferimento: ACR122U API v2.04 + ISO/IEC 7816-4
 // ---------------------------------------------------------------------------
 std::string CommandParser::decodeSW(uint8_t sw1, uint8_t sw2)
 {
@@ -57,7 +79,8 @@ std::string CommandParser::decodeSW(uint8_t sw1, uint8_t sw2)
 // ---------------------------------------------------------------------------
 void CommandParser::showHelp() const
 {
-    std::cout << "\n================ MFTOOL COMMANDS ================\n";
+    using namespace Color;
+    std::cout << "\n" << BOLD << "================ MFTOOL COMMANDS ================" << RESET << "\n";
     std::cout << "  tagid\n";
     std::cout << "      Legge NUID + Manufacturer Data dal blocco 0 (S0/B0)\n";
     std::cout << "      Autentica automaticamente con Key A (default A0A1A2A3A4A5)\n\n";
@@ -72,14 +95,17 @@ void CommandParser::showHelp() const
     std::cout << "  write -s <settore> -b <blocco> -d <32 hex chars>\n";
     std::cout << "      Scrive 16 byte su un blocco autenticato\n";
     std::cout << "      Es: write -s 1 -b 0 -d 48656C6C6F000000000000000000000\n\n";
-    std::cout << "  dump [-k <keyfile>] [-f mct|bin]\n";
-    std::cout << "      Legge tutti i 64 blocchi (16 settori) e salva in dumps/<UID>.<fmt>\n";
-    std::cout << "      -f mct  formato MIFARE Classic Tool (default, testo hex)\n";
-    std::cout << "      -f bin  dump binario grezzo (1024 byte, blocchi mancanti = 0x00)\n";
-    std::cout << "      Default keyfile: keys/found.keys\n\n";
+    std::cout << "  dump\n";
+    std::cout << "      Legge tutti i 64 blocchi (16 settori) e salva in dumps/<UID>.mfd\n";
+    std::cout << "      Formato: MIFARE Dump binario (1024 byte, standard universale)\n";
+    std::cout << "      Richiede scan preventivo per autenticazione\n\n";
+    std::cout << "  readdump <filename>\n";
+    std::cout << "      Legge e visualizza un file dump .mfd dalla cartella dumps/\n";
+    std::cout << "      Mostra contenuto con decodifica Access Bits e Value Blocks\n";
+    std::cout << "      Es: readdump dump_3A165647.mfd\n\n";
     std::cout << "  help    Mostra questo messaggio\n";
     std::cout << "  exit    Esci dal programma\n";
-    std::cout << "=================================================\n\n";
+    std::cout << BOLD << "=================================================" << RESET << "\n\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -112,10 +138,6 @@ bool CommandParser::initializeReader()
 
 // ---------------------------------------------------------------------------
 // autoAuth
-//
-// Tenta l'autenticazione del settore tramite:
-//   1. Stato già memorizzato (isAuthenticated)
-//   2. Fallback: chiavi nel keyFile specificato (KeyA poi KeyB per ognuna)
 // ---------------------------------------------------------------------------
 bool CommandParser::autoAuth(int sector, const std::string& keyFile)
 {
@@ -133,18 +155,11 @@ bool CommandParser::autoAuth(int sector, const std::string& keyFile)
 
 // ---------------------------------------------------------------------------
 // cmdTagID
-//
-// Legge il Manufacturer Block (Settore 0, Blocco 0 = blocco assoluto 0).
-// Contenuto secondo NXP MF1S50yyX/V1 datasheet §8.6.1:
-//   byte 0-3  : NUID (4 byte) oppure byte 0-6 per UID (7 byte)
-//   byte 4-15 : Manufacturer Data (read-only, write-protected)
-//
-// Richiede autenticazione Key A sul settore 0.
-// Prova prima la chiave di default (A0 A1 A2 A3 A4 A5 / transport config),
-// poi le chiavi nel file keys/found.keys come fallback.
 // ---------------------------------------------------------------------------
 void CommandParser::cmdTagID()
 {
+    using namespace Color;
+    
     const std::vector<uint8_t> defaultKey = { 0xA0,0xA1,0xA2,0xA3,0xA4,0xA5 };
     const std::string          keyFile    = "keys/found.keys";
 
@@ -177,10 +192,6 @@ void CommandParser::cmdTagID()
 
     const auto& d = resp.data;
 
-    constexpr const char* CYAN   = "\033[96m";
-    constexpr const char* YELLOW = "\033[93m";
-    constexpr const char* RESET  = "\033[0m";
-
     auto hx = [](uint8_t b) {
         std::ostringstream ss;
         ss << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << (int)b;
@@ -192,34 +203,29 @@ void CommandParser::cmdTagID()
     std::cout << "    ";
     for (int i = 0; i < 16; ++i)
     {
-        if (i == 0) std::cout << CYAN;
-        if (i == 4) std::cout << RESET << " " << YELLOW;
+        if (i == 0) std::cout << UID;
+        if (i == 4) std::cout << RESET << " " << MFR_DATA;
         std::cout << hx(d[i]);
         if (i < 15) std::cout << " ";
     }
     std::cout << RESET << "\n";
 
-    std::cout << "    " << CYAN   << "NUID    " << RESET << ": " << CYAN;
+    std::cout << "    " << UID << "NUID    " << RESET << ": " << UID;
     for (int i = 0; i < 4;  ++i) std::cout << hx(d[i]) << (i < 3  ? " " : "");
     std::cout << RESET << "\n";
 
-    std::cout << "    " << YELLOW << "Mfr Data" << RESET << ": " << YELLOW;
+    std::cout << "    " << MFR_DATA << "Mfr Data" << RESET << ": " << MFR_DATA;
     for (int i = 4; i < 16; ++i) std::cout << hx(d[i]) << (i < 15 ? " " : "");
     std::cout << RESET << "\n";
 }
 
 // ---------------------------------------------------------------------------
 // cmdAuthenticate
-//
-// Sintassi: authenticate -s <sector> [-k <keyfile>] [-t A|B] [-key <12 hex>]
-//
-// Senza -t: prova prima KeyA poi KeyB (tryAuthenticate).
-// Con -t A o -t B: prova solo il tipo specificato con tutte le chiavi.
-// Con -key: usa la chiave inline (12 hex chars) senza keyfile.
-// Default keyfile: keys/found.keys
 // ---------------------------------------------------------------------------
 void CommandParser::cmdAuthenticate(std::istringstream& args)
 {
+    using namespace Color;
+    
     int         sector  = -1;
     std::string keyFile = "keys/found.keys";
     char        keyType = '\0';
@@ -287,9 +293,11 @@ void CommandParser::cmdAuthenticate(std::istringstream& args)
     if (ok)
     {
         const auto& auth = m_mifare->getSectorAuth(sector);
+        const char* keyColor = (auth.keyType == 'A') ? KEY_A : KEY_B;
+        
         std::cout << "[+] Settore " << sector
-                  << " autenticato (Key" << auth.keyType << "): "
-                  << Hex::bytesToString(auth.key) << "\n";
+                  << " autenticato (" << keyColor << "Key" << auth.keyType << RESET << "): "
+                  << keyColor << Hex::bytesToString(auth.key) << RESET << "\n";
     }
     else
     {
@@ -300,16 +308,11 @@ void CommandParser::cmdAuthenticate(std::istringstream& args)
 
 // ---------------------------------------------------------------------------
 // cmdScan
-//
-// Sintassi: scan [-k <keyfile>]
-//
-// Prova tutti i 16 settori con tutte le chiavi del file.
-// Per ogni settore: prima tutte le chiavi con KeyA, poi con KeyB.
-// Mostra una tabella con le chiavi trovate.
-// Default keyfile: keys/found.keys
 // ---------------------------------------------------------------------------
 void CommandParser::cmdScan(std::istringstream& args)
 {
+    using namespace Color;
+    
     std::string keyFile = "keys/found.keys";
     std::string tok;
     while (args >> tok)
@@ -322,13 +325,6 @@ void CommandParser::cmdScan(std::istringstream& args)
         return;
     }
 
-    constexpr const char* GREEN = "\033[92m";
-    constexpr const char* GRAY  = "\033[90m";
-    constexpr const char* BOLD  = "\033[1m";
-    constexpr const char* CYAN  = "\033[96m";
-    constexpr const char* RESET = "\033[0m";
-
-    // "A0 A1 A2 A3 A4 A5" = 17 chars
     constexpr size_t KEY_W = 17;
 
     auto secStr = [](int s) {
@@ -366,39 +362,35 @@ void CommandParser::cmdScan(std::istringstream& args)
             if (m_mifare->authenticate(s, key, 'B'))
                 { keyBStr = Hex::bytesToString(key); crackedB++; break; }
 
-        // Ripristina KeyA come auth principale (usata da read)
+        // Ripristina KeyA come auth principale
         if (!keyAStr.empty())
             m_mifare->authenticate(s, m_mifare->getSectorAuth(s).keyA, 'A');
 
         const bool hasA = !keyAStr.empty();
         const bool hasB = !keyBStr.empty();
 
-        std::cout << "  " << CYAN << "S" << secStr(s) << RESET << " | ";
-        std::cout << (hasA ? GREEN : GRAY) << pad(hasA ? keyAStr : "----", KEY_W) << RESET;
+        std::cout << "  S" << secStr(s) << " | ";
+        std::cout << (hasA ? KEY_A : GRAY) << pad(hasA ? keyAStr : "----", KEY_W) << RESET;
         std::cout << " | ";
-        std::cout << (hasB ? GREEN : GRAY) << (hasB ? keyBStr : "----") << RESET;
+        std::cout << (hasB ? KEY_B : GRAY) << (hasB ? keyBStr : "----") << RESET;
         std::cout << "\n";
     }
 
     std::cout << BOLD << hRule << "\n" << RESET;
     std::cout << "\n[+] Risultati: "
-              << GREEN << crackedA << "/16" << RESET << " KeyA,  "
-              << GREEN << crackedB << "/16" << RESET << " KeyB trovate.\n\n";
+              << KEY_A << crackedA << "/16" << RESET << " KeyA,  "
+              << KEY_B << crackedB << "/16" << RESET << " KeyB trovate.\n\n";
 }
 
 // ---------------------------------------------------------------------------
 // cmdRead
-//
-// Sintassi: read -s <sector> [-b <block>]
-//
-// Senza -b  → tabella di tutti i 4 blocchi con colori per campo e
-//             colonna Access [C1C2C3] sulla destra di ogni riga.
-// Con    -b → decodifica dettagliata del singolo blocco con colori per tipo.
 // ---------------------------------------------------------------------------
 void CommandParser::cmdRead(std::istringstream& args)
 {
+    using namespace Color;
+    
     int sector   = -1;
-    int relBlock = -1;   // -1 = non specificato → dump tabellare
+    int relBlock = -1;
 
     std::string token;
     while (args >> token)
@@ -420,7 +412,6 @@ void CommandParser::cmdRead(std::istringstream& args)
         return;
     }
 
-    // Helper comune: formatta un byte come "A0" senza toccare lo stato di cout
     auto hx = [](uint8_t b) {
         std::ostringstream ss;
         ss << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << (int)b;
@@ -432,26 +423,11 @@ void CommandParser::cmdRead(std::istringstream& args)
     // =========================================================================
     if (relBlock == -1)
     {
-        constexpr const char* RED     = "\033[91m";
-        constexpr const char* GREEN   = "\033[92m";
-        constexpr const char* YELLOW  = "\033[93m";
-        constexpr const char* CYAN    = "\033[96m";
-        constexpr const char* MAGENTA = "\033[95m";
-        constexpr const char* GRAY    = "\033[90m";
-        constexpr const char* BOLD    = "\033[1m";
-        constexpr const char* RESET   = "\033[0m";
-
-        // Leggi tutti e 4 i blocchi prima di stampare:
-        // il sector trailer (B3) serve per decodificare gli access bit di tutti i blocchi.
         std::vector<APDUResponse> resps(MifareClassic::BLOCKS_PER_SECTOR);
         for (int b = 0; b < MifareClassic::BLOCKS_PER_SECTOR; ++b)
             resps[b] = m_mifare->readBlock(sector, b);
 
-        // --- Decode access bits da sector trailer (B3) ---
-        // NXP MF1S50yyX/V1 Figure 10:
-        //   C1_b = bit (4+b) di byte 7
-        //   C2_b = bit  b    di byte 8
-        //   C3_b = bit (4+b) di byte 8
+        // Decode access bits da sector trailer (B3)
         uint8_t accC1[4]  = {}, accC2[4]  = {}, accC3[4]  = {}, accIdx[4] = {};
         bool trailerValid = false;
 
@@ -475,32 +451,33 @@ void CommandParser::cmdRead(std::istringstream& args)
             }
         }
 
-        // Descrizioni brevi per colonna Access (data block — NXP Table 8)
         static const char* dataAccShort[8] = {
-            /*000*/ "r/w/inc/dec  KeyA|B",
-            /*001*/ "r+dec  KeyA|B  (value NR)",
-            /*010*/ "r  KeyA|B",
-            /*011*/ "r/w  KeyB",
-            /*100*/ "r:KeyA|B  w:KeyB",
-            /*101*/ "r  KeyB",
-            /*110*/ "r+dec:A|B  inc:B  (value)",
-            /*111*/ "blocked"
+            "r/w/inc/dec  KeyA|B",
+            "r+dec  KeyA|B  (value NR)",
+            "r  KeyA|B",
+            "r/w  KeyB",
+            "r:KeyA|B  w:KeyB",
+            "r  KeyB",
+            "r+dec:A|B  inc:B  (value)",
+            "blocked"
         };
-        // Descrizioni brevi per colonna Access (sector trailer — NXP Table 7)
         static const char* trailAccShort[8] = {
-            /*000*/ "KeyB readable",
-            /*001*/ "transport  acc:A  keyB:rw-A",
-            /*010*/ "acc-r:A  keyB-r:A",
-            /*011*/ "w-KeyA:B  acc:B  keyB:B",
-            /*100*/ "w-KeyA:B  acc-r:A|B  keyB:B",
-            /*101*/ "acc:B",
-            /*110*/ "write-protect  acc-r:A|B",
-            /*111*/ "locked  acc-r:A|B"
+            "KeyB readable",
+            "transport  acc:A  keyB:rw-A",
+            "acc-r:A  keyB-r:A",
+            "w-KeyA:B  acc:B  keyB:B",
+            "w-KeyA:B  acc-r:A|B  keyB:B",
+            "acc:B",
+            "write-protect  acc-r:A|B",
+            "locked  acc-r:A|B"
         };
 
         const auto& auth = m_mifare->getSectorAuth(sector);
+        const char* keyColor = (auth.keyType == 'A') ? KEY_A : KEY_B;
+        
         std::cout << "\n" << BOLD << "[Sector " << sector << "]" << RESET
-                  << " Key" << auth.keyType << ": " << Hex::bytesToString(auth.key) << "\n";
+                  << " " << keyColor << "Key" << auth.keyType << RESET << ": "
+                  << keyColor << Hex::bytesToString(auth.key) << RESET << "\n";
         std::cout << "  Blk  Abs  | 00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F | ASCII            | [CxN] Access\n";
         std::cout << "  ---------   -----------------------------------------------   ----------------   -------------\n";
 
@@ -513,13 +490,12 @@ void CommandParser::cmdRead(std::istringstream& args)
 
             if (!resp.success)
             {
-                std::cout << "-- lettura fallita: " << decodeSW(resp.sw1, resp.sw2) << "\n";
+                std::cout << "lettura fallita: " << decodeSW(resp.sw1, resp.sw2) << "\n";
                 continue;
             }
 
             const auto& d = resp.data;
 
-            // Classificazione blocco
             const bool isMfr     = (sector == 0 && b == 0);
             const bool isTrailer = (b == 3);
             bool isValue = false;
@@ -535,42 +511,36 @@ void CommandParser::cmdRead(std::istringstream& args)
                 if (d[12] != (uint8_t)~d[13]) isValue = false;
             }
 
-            // Colore per indice byte in base al tipo di blocco
             auto byteColor = [&](int i) -> const char* {
-                if (isMfr)     return i <  4 ? CYAN   : YELLOW;
-                if (isTrailer) return i <  6 ? RED    : i < 10 ? YELLOW : CYAN;
-                if (isValue)   return i <  4 ? CYAN   : i <  8 ? GRAY   : i < 12 ? CYAN : YELLOW;
-                return GREEN;
+                if (isMfr)     return i <  4 ? UID : MFR_DATA;
+                if (isTrailer) return i <  6 ? KEY_A : i < 10 ? ACCESS_BITS : KEY_B;
+                if (isValue)   return i <  4 ? VALUE_BLOCK : i <  8 ? GRAY : i < 12 ? VALUE_BLOCK : VALUE_BLOCK;
+                return DATA_BLOCK;
             };
 
-            // Hex colorato per campo
             for (int i = 0; i < 16; ++i)
             {
                 if (i == 8) std::cout << " ";
                 std::cout << byteColor(i) << hx(d[i]) << RESET << " ";
             }
 
-            // ASCII
             std::cout << "| ";
             for (uint8_t byte : d)
                 std::cout << (std::isprint(byte) ? (char)byte : '.');
 
-            // Colonna Access
             std::cout << " | ";
             if (isMfr)
             {
-                std::cout << MAGENTA << "[mfr] read-only" << RESET;
+                std::cout << "[mfr] read-only";
             }
             else if (!trailerValid)
             {
-                std::cout << RED << "INVALID acc bits!" << RESET;
+                std::cout << "INVALID acc bits!";
             }
             else
             {
                 const char* desc = isTrailer ? trailAccShort[accIdx[b]] : dataAccShort[accIdx[b]];
-                const char* col  = isTrailer ? YELLOW : isValue ? CYAN : GREEN;
-                std::cout << GRAY << "[" << (int)accC1[b] << (int)accC2[b] << (int)accC3[b] << "] "
-                          << RESET << col << desc << RESET;
+                std::cout << GRAY << "[" << (int)accC1[b] << (int)accC2[b] << (int)accC3[b] << "] " << RESET << desc;
             }
 
             std::cout << "\n";
@@ -591,15 +561,6 @@ void CommandParser::cmdRead(std::istringstream& args)
 
     const auto& d        = resp.data;
     const int   absBlock = MifareClassic::toAbsBlock(sector, relBlock);
-
-    constexpr const char* RED     = "\033[91m";
-    constexpr const char* GREEN   = "\033[92m";
-    constexpr const char* YELLOW  = "\033[93m";
-    constexpr const char* CYAN    = "\033[96m";
-    constexpr const char* MAGENTA = "\033[95m";
-    constexpr const char* GRAY    = "\033[90m";
-    constexpr const char* BOLD    = "\033[1m";
-    constexpr const char* RESET   = "\033[0m";
 
     auto printGroup = [&](int from, int to, const char* color) {
         for (int i = from; i <= to; ++i)
@@ -625,7 +586,6 @@ void CommandParser::cmdRead(std::istringstream& args)
         if (d[12] != (uint8_t)~d[13]) isValue = false;
     }
 
-    const char* typeColor = isMfr ? MAGENTA : isTrailer ? YELLOW : isValue ? CYAN : GREEN;
     const char* typeLabel = isMfr     ? "Manufacturer Block  [read-only]" :
                             isTrailer ? "Sector Trailer" :
                             isValue   ? "Value Block" :
@@ -633,84 +593,84 @@ void CommandParser::cmdRead(std::istringstream& args)
 
     std::cout << "[+] S" << sector << "/B" << relBlock
               << "  abs=" << absBlock << "  "
-              << typeColor << BOLD << "[" << typeLabel << "]" << RESET << "\n";
+              << BOLD << "[" << typeLabel << "]" << RESET << "\n";
 
     std::cout << "    ";
     if (isMfr)
     {
-        printGroup(0, 3, CYAN);    std::cout << "  ";
-        printGroup(4, 15, YELLOW);
+        printGroup(0, 3, UID);        std::cout << "  ";
+        printGroup(4, 15, MFR_DATA);
     }
     else if (isTrailer)
     {
-        printGroup(0, 5, RED);     std::cout << "  ";
-        printGroup(6, 9, YELLOW);  std::cout << "  ";
-        printGroup(10, 15, CYAN);
+        printGroup(0, 5, KEY_A);      std::cout << "  ";
+        printGroup(6, 9, ACCESS_BITS); std::cout << "  ";
+        printGroup(10, 15, KEY_B);
     }
     else if (isValue)
     {
-        printGroup(0, 3, CYAN);    std::cout << "  ";
-        printGroup(4, 7, GRAY);    std::cout << "  ";
-        printGroup(8, 11, CYAN);   std::cout << "  ";
-        printGroup(12, 15, YELLOW);
+        printGroup(0, 3, VALUE_BLOCK);  std::cout << "  ";
+        printGroup(4, 7, GRAY);         std::cout << "  ";
+        printGroup(8, 11, VALUE_BLOCK); std::cout << "  ";
+        printGroup(12, 15, VALUE_BLOCK);
     }
     else
     {
-        printGroup(0, 7, GREEN);   std::cout << "  ";
-        printGroup(8, 15, GREEN);
+        printGroup(0, 7, DATA_BLOCK);  std::cout << "  ";
+        printGroup(8, 15, DATA_BLOCK);
     }
     std::cout << "\n";
 
     if (isMfr)
     {
-        std::cout << "    " << CYAN   << "NUID    " << RESET << ": " << CYAN;
+        std::cout << "    " << UID << "NUID    " << RESET << ": " << UID;
         for (int i = 0; i < 4;  ++i) std::cout << hx(d[i]) << (i < 3  ? " " : "");
         std::cout << RESET << "\n";
 
-        std::cout << "    " << YELLOW << "Mfr Data" << RESET << ": " << YELLOW;
+        std::cout << "    " << MFR_DATA << "Mfr Data" << RESET << ": " << MFR_DATA;
         for (int i = 4; i < 16; ++i) std::cout << hx(d[i]) << (i < 15 ? " " : "");
         std::cout << RESET << "\n";
     }
     else if (isTrailer)
     {
-        std::cout << "    " << RED << "KeyA    " << RESET
-                  << ": " << RED << "(hidden by IC)\n" << RESET;
+        std::cout << "    " << KEY_A << "KeyA    " << RESET
+                  << ": " << KEY_A << "(hidden by IC)\n" << RESET;
 
         const bool valid =
             ((d[6] & 0x0F) == ((~d[7] >> 4) & 0x0F)) &&
             ((d[6] >>  4)  == ((~d[8])       & 0x0F)) &&
             ((d[7] & 0x0F) == ((~d[8] >> 4)  & 0x0F));
 
-        std::cout << "    " << YELLOW << "AccBits " << RESET << ": ";
+        std::cout << "    " << ACCESS_BITS << "AccBits " << RESET << ": ";
 
         if (!valid)
         {
-            std::cout << RED << BOLD << "INVALID  ⚠ settore potenzialmente bloccato!\n" << RESET;
+            std::cout << BOLD << "INVALID - settore potenzialmente bloccato!\n" << RESET;
         }
         else
         {
-            std::cout << YELLOW << hx(d[6]) << " " << hx(d[7]) << " " << hx(d[8]) << RESET
-                      << "  UserByte=" << CYAN << hx(d[9]) << RESET << "\n";
+            std::cout << ACCESS_BITS << hx(d[6]) << " " << hx(d[7]) << " " << hx(d[8]) << RESET
+                      << "  UserByte=" << GRAY << hx(d[9]) << RESET << "\n";
 
             static const char* dataAcc[8] = {
-                /*000*/ "transport   r/w/inc/dec : KeyA|B",
-                /*001*/ "value (nr)  r+dec       : KeyA|B  (non-rechargeable)",
-                /*010*/ "read-only   r           : KeyA|B",
-                /*011*/ "r/w KeyB    r/w         : KeyB",
-                /*100*/ "r/w         r: KeyA|B   w: KeyB",
-                /*101*/ "read KeyB   r           : KeyB",
-                /*110*/ "value       r+dec: KeyA|B  w+inc: KeyB",
-                /*111*/ "blocked     no access"
+                "transport   r/w/inc/dec : KeyA|B",
+                "value (nr)  r+dec       : KeyA|B  (non-rechargeable)",
+                "read-only   r           : KeyA|B",
+                "r/w KeyB    r/w         : KeyB",
+                "r/w         r: KeyA|B   w: KeyB",
+                "read KeyB   r           : KeyB",
+                "value       r+dec: KeyA|B  w+inc: KeyB",
+                "blocked     no access"
             };
             static const char* trailAcc[8] = {
-                /*000*/ "KeyB readable : w-KeyA=A  acc-r=A  keyB=rw-A",
-                /*001*/ "transport     : acc=rw-A  keyB=rw-A",
-                /*010*/ "              : acc-r=A  keyB=r-A  (no writes)",
-                /*011*/ "              : w-KeyA=B  acc=rw-B  keyB=w-B",
-                /*100*/ "              : w-KeyA=B  acc-r=A|B  keyB=w-B",
-                /*101*/ "              : acc=rw-B",
-                /*110*/ "write-protect : acc-r=A|B",
-                /*111*/ "locked        : acc-r=A|B"
+                "KeyB readable : w-KeyA=A  acc-r=A  keyB=rw-A",
+                "transport     : acc=rw-A  keyB=rw-A",
+                "              : acc-r=A  keyB=r-A  (no writes)",
+                "              : w-KeyA=B  acc=rw-B  keyB=w-B",
+                "              : w-KeyA=B  acc-r=A|B  keyB=w-B",
+                "              : acc=rw-B",
+                "write-protect : acc-r=A|B",
+                "locked        : acc-r=A|B"
             };
 
             for (int b = 0; b < 4; ++b)
@@ -721,7 +681,7 @@ void CommandParser::cmdRead(std::istringstream& args)
                 const uint8_t idx = (c1 << 2) | (c2 << 1) | c3;
                 const char*  desc = (b == 3) ? trailAcc[idx] : dataAcc[idx];
 
-                std::cout << "    " << YELLOW
+                std::cout << "    " << ACCESS_BITS
                           << "B" << b << (b == 3 ? " (trailer)" : "          ")
                           << RESET << ": "
                           << "[" << (int)c1 << (int)c2 << (int)c3 << "]  "
@@ -729,7 +689,7 @@ void CommandParser::cmdRead(std::istringstream& args)
             }
         }
 
-        std::cout << "    " << CYAN << "KeyB    " << RESET << ": " << CYAN;
+        std::cout << "    " << KEY_B << "KeyB    " << RESET << ": " << KEY_B;
         for (int i = 10; i < 16; ++i) std::cout << hx(d[i]) << (i < 15 ? " " : "");
         std::cout << RESET << "\n";
     }
@@ -744,80 +704,54 @@ void CommandParser::cmdRead(std::istringstream& args)
         hexAdr << "0x" << std::uppercase << std::hex
                << std::setw(2) << std::setfill('0') << static_cast<int>(d[12]);
 
-        std::cout << "    " << CYAN   << "Value   " << RESET << ": "
-                  << CYAN << std::dec << val << RESET
+        std::cout << "    " << VALUE_BLOCK << "Value   " << RESET << ": "
+                  << VALUE_BLOCK << std::dec << val << RESET
                   << "  " << GRAY << hexVal.str() << RESET << "\n";
 
-        std::cout << "    " << YELLOW << "Address " << RESET << ": "
-                  << YELLOW << std::dec << static_cast<int>(d[12]) << RESET
+        std::cout << "    " << VALUE_BLOCK << "Address " << RESET << ": "
+                  << VALUE_BLOCK << std::dec << static_cast<int>(d[12]) << RESET
                   << "  " << GRAY << hexAdr.str() << RESET << "\n";
     }
 }
 
 // ---------------------------------------------------------------------------
 // cmdDumpFile
-//
-// Sintassi: dump [-k <keyfile>] [-f mct|bin]
-//
-// Legge tutti i 64 blocchi (16 settori × 4 blocchi) autenticando ogni settore
-// con le chiavi disponibili. Salva in dumps/<NUID>.<fmt>.
-//
-// Formato MCT (MIFARE Classic Tool — default):
-//   +Sector: N
-//   <32 hex chars>   ← un blocco per riga
-//   --------------------------------  ← blocco non leggibile
-//
-// Formato BIN:
-//   1024 byte grezzi (64 blocchi × 16 byte).
-//   Blocchi non letti → 16 byte 0x00.
 // ---------------------------------------------------------------------------
-void CommandParser::cmdDumpFile(std::istringstream& args)
+void CommandParser::cmdDumpFile()
 {
-    std::string keyFile = "keys/found.keys";
-    std::string fmt = "mct";
-
-    std::string tok;
-    while (args >> tok)
+    for (int s = 0; s < MifareClassic::SECTORS; ++s)
     {
-        if (tok == "-k" && args >> tok) keyFile = tok;
-        else if (tok == "-f" && args >> tok) fmt = tok;
+        if (!m_mifare->isAuthenticated(s))
+        {
+            Logger::error("Non autenticato al settore " + std::to_string(s) + ". Eseguire prima uno scan.");
+            return;
+        }
     }
 
-    if (fmt != "mct" && fmt != "bin")
-    {
-        std::cout << "[!] Formato non valido. Usa: -f mct (default) o -f bin\n";
-        return;
-    }
-
+    using namespace Color;
+    
     // -------------------------------------------------------------------------
-    // NUID dal Manufacturer Block (S0/B0) → nome file
+    // NUID dal Manufacturer Block (S0/B0) -> nome file
     // -------------------------------------------------------------------------
     std::string uidStr;
 
-    if (autoAuth(0, keyFile))
+    auto resp = m_mifare->readBlock(0, 0);
+    if (resp.success && resp.data.size() >= 4)
     {
-        auto resp = m_mifare->readBlock(0, 0);
-        if (resp.success && resp.data.size() >= 4)
-        {
-            std::ostringstream ss;
-            for (int i = 0; i < 4; ++i)
-                ss << std::uppercase << std::hex
-                   << std::setw(2) << std::setfill('0') << (int)resp.data[i];
-            uidStr = ss.str();
-        }
+        std::ostringstream ss;
+        for (int i = 0; i < 4; ++i)
+            ss << std::uppercase << std::hex
+                << std::setw(2) << std::setfill('0') << (int)resp.data[i];
+        uidStr = ss.str();
     }
 
     if (uidStr.empty())
     {
-        // Fallback: timestamp UNIX se S0/B0 non è leggibile
         std::ostringstream ss;
         ss << "UNKNOWN_" << std::dec << static_cast<long>(std::time(nullptr));
         uidStr = ss.str();
     }
 
-    // -------------------------------------------------------------------------
-    // Crea cartella dumps/
-    // -------------------------------------------------------------------------
     namespace fs = std::filesystem;
     try { fs::create_directories("dumps"); }
     catch (const std::exception& e)
@@ -826,7 +760,7 @@ void CommandParser::cmdDumpFile(std::istringstream& args)
         return;
     }
 
-    const std::string filename = "dumps/" + uidStr + "." + fmt;
+    const std::string filename = "dumps/dump_" + uidStr + ".mfd";
 
     // -------------------------------------------------------------------------
     // Lettura di tutti i 64 blocchi
@@ -838,39 +772,17 @@ void CommandParser::cmdDumpFile(std::istringstream& args)
 
     int nOk = 0, nFail = 0;
 
-    constexpr const char* GREEN = "\033[92m";
-    constexpr const char* RED = "\033[91m";
-    constexpr const char* GRAY = "\033[90m";
-    constexpr const char* CYAN = "\033[96m";
-    constexpr const char* BOLD = "\033[1m";
-    constexpr const char* RESET = "\033[0m";
-
     auto secStr = [](int s) -> std::string {
         std::ostringstream ss;
         ss << std::dec << std::setw(2) << std::setfill('0') << s;
         return ss.str();
-        };
+    };
 
     std::cout << "\n" << BOLD << "Dump " << MifareClassic::SECTORS
-        << " settori → " << filename << RESET << "\n\n";
+              << " settori -> " << filename << RESET << "\n\n";
 
     for (int s = 0; s < MifareClassic::SECTORS; ++s)
     {
-        const bool authed = autoAuth(s, keyFile);
-
-        std::cout << "  S" << secStr(s) << "  ";
-
-        if (!authed)
-        {
-            std::cout << RED << "[----] non autenticato" << RESET << "\n";
-            nFail += MifareClassic::BLOCKS_PER_SECTOR;
-            continue;
-        }
-
-        const auto& auth = m_mifare->getSectorAuth(s);
-        std::cout << GREEN << "[Key" << auth.keyType << ": "
-            << Hex::bytesToString(auth.key) << "]" << RESET << "  ";
-
         int secOk = 0;
         for (int b = 0; b < MifareClassic::BLOCKS_PER_SECTOR; ++b)
         {
@@ -880,121 +792,238 @@ void CommandParser::cmdDumpFile(std::istringstream& args)
             if (resp.success) { nOk++; secOk++; }
             else                nFail++;
         }
-
-        if (secOk == MifareClassic::BLOCKS_PER_SECTOR)
-            std::cout << GREEN << "4/4 blocchi" << RESET << "\n";
-        else
-            std::cout << RED << secOk << "/4 blocchi" << RESET << "\n";
     }
 
     // -------------------------------------------------------------------------
-    // Scrittura file
+    // Scrittura file .mfd (formato binario standard)
     // -------------------------------------------------------------------------
-    if (fmt == "mct")
+    std::ofstream out(filename, std::ios::binary);
+    if (!out)
     {
-        std::ofstream out(filename, std::ios::binary);
-        if (!out)
-        {
-            std::cout << "[-] Impossibile aprire " << filename << " in scrittura\n";
-            return;
-        }
+        std::cout << "[-] Impossibile aprire " << filename << " in scrittura\n";
+        return;
+    }
 
-        auto blockHex = [](const std::vector<uint8_t>& d) -> std::string {
-            std::ostringstream ss;
-            for (uint8_t b : d)
-                ss << std::uppercase << std::hex
-                   << std::setw(2) << std::setfill('0') << (int)b;
-            return ss.str();
+    for (int s = 0; s < MifareClassic::SECTORS; ++s)
+    {
+        const auto& auth = m_mifare->getSectorAuth(s);
+
+        for (int b = 0; b < MifareClassic::BLOCKS_PER_SECTOR; ++b)
+        {
+            const auto& bd = mem[s][b];
+
+            // Inizializza a zero: blocchi non letti -> 16 byte 0x00
+            std::vector<uint8_t> row(16, 0x00);
+            if (bd.ok && bd.data.size() == 16)
+                row = bd.data;
+
+            // Iniezione chiavi nel sector trailer (blocco 3)
+            // L'IC maschera Key A nella risposta READ BINARY (hardware by design)
+            // Iniettare le chiavi note produce un dump completo e reimportabile
+            if (b == 3)
+            {
+                if (auth.keyA.size() == 6)
+                    std::copy(auth.keyA.begin(), auth.keyA.end(), row.begin());
+                if (auth.keyB.size() == 6)
+                    std::copy(auth.keyB.begin(), auth.keyB.end(), row.begin() + 10);
+            }
+
+            out.write(reinterpret_cast<const char*>(row.data()), 16);
+        }
+    }
+
+    std::cout << "\n[+] Salvato: " << filename << "\n";
+    std::cout << "    Formato: MIFARE Dump (.mfd) - 1024 byte binari\n";
+    std::cout << "    Blocchi letti: " << nOk << "/64"
+              << "  Non letti: " << nFail << "\n\n";
+}
+
+// ---------------------------------------------------------------------------
+// cmdReadDump
+// Legge e visualizza un file dump .mfd
+// ---------------------------------------------------------------------------
+void CommandParser::cmdReadDump(std::istringstream& args)
+{
+    using namespace Color;
+
+    std::string filename;
+    if (!(args >> filename))
+    {
+        std::cout << "[!] Uso: readdump <filename>\n";
+        std::cout << "    Es: readdump dump_3A165647.mfd\n";
+        return;
+    }
+
+    // Prepend "dumps/" se non già presente
+    std::string fullPath = filename;
+    if (filename.find("dumps/") == std::string::npos)
+        fullPath = "dumps/" + filename;
+
+    // Verifica esistenza file
+    std::ifstream file(fullPath, std::ios::binary);
+    if (!file)
+    {
+        std::cout << "[-] File non trovato: " << fullPath << "\n";
+        return;
+    }
+
+    // Leggi 1024 byte (64 blocchi × 16 byte)
+    std::vector<uint8_t> data(1024);
+    file.read(reinterpret_cast<char*>(data.data()), 1024);
+    auto bytesRead = file.gcount();
+    file.close();
+
+    if (bytesRead != 1024)
+    {
+        std::cout << "[-] File corrotto: attesi 1024 byte, letti " << bytesRead << "\n";
+        return;
+    }
+
+    // Helper per formattazione hex
+    auto hx = [](uint8_t b) {
+        std::ostringstream ss;
+        ss << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << (int)b;
+        return ss.str();
         };
 
-        for (int s = 0; s < MifareClassic::SECTORS; ++s)
-        {
-            out << "+Sector: " << s << "\n";
-            const auto& auth = m_mifare->getSectorAuth(s);
+    // Estrai UID dal blocco 0
+    std::string uidStr;
+    for (int i = 0; i < 4; ++i)
+        uidStr += hx(data[i]) + (i < 3 ? " " : "");
 
-            for (int b = 0; b < MifareClassic::BLOCKS_PER_SECTOR; ++b)
-            {
-                const auto& bd = mem[s][b];
+    std::cout << "\n" << BOLD << "=== DUMP FILE: " << filename << " ===" << RESET << "\n";
+    std::cout << "UID: " << UID << uidStr << RESET << "\n\n";
 
-                if (!bd.ok || bd.data.size() != 16)
-                {
-                    out << "--------------------------------\n";
-                    continue;
-                }
-
-                std::vector<uint8_t> row = bd.data;
-
-                // Sector trailer: l'IC maschera Key A come 0x00 nella risposta
-                // READ BINARY (hardware by design, non bypassabile via PC/SC).
-                // Key B può essere 0x00 se le AC non la rendono leggibile con
-                // il tipo di chiave usato. Iniettare le chiavi note da m_authState
-                // produce un dump completo e reimportabile in MCT / MifareOneTool.
-                if (b == 3)
-                {
-                    if (auth.keyA.size() == 6)
-                        std::copy(auth.keyA.begin(), auth.keyA.end(), row.begin());
-                    if (auth.keyB.size() == 6)
-                        std::copy(auth.keyB.begin(), auth.keyB.end(), row.begin() + 10);
-                }
-
-                out << blockHex(row) << "\n";
-            }
-        }
-    }
-    else  // bin
+    // Decodifica per ogni settore
+    for (int s = 0; s < MifareClassic::SECTORS; ++s)
     {
-        std::ofstream out(filename, std::ios::binary);
-        if (!out)
-        {
-            std::cout << "[-] Impossibile aprire " << filename << " in scrittura\n";
-            return;
-        }
+        const int baseOffset = s * MifareClassic::BLOCKS_PER_SECTOR * 16;
 
-        for (int s = 0; s < MifareClassic::SECTORS; ++s)
-        {
-            const auto& auth = m_mifare->getSectorAuth(s);
+        // Leggi sector trailer per access bits
+        const int trailerOffset = baseOffset + (3 * 16);
+        uint8_t accC1[4] = {}, accC2[4] = {}, accC3[4] = {}, accIdx[4] = {};
+        bool trailerValid = false;
 
-            for (int b = 0; b < MifareClassic::BLOCKS_PER_SECTOR; ++b)
+        const auto& t6 = data[trailerOffset + 6];
+        const auto& t7 = data[trailerOffset + 7];
+        const auto& t8 = data[trailerOffset + 8];
+
+        trailerValid =
+            ((t6 & 0x0F) == ((~t7 >> 4) & 0x0F)) &&
+            ((t6 >> 4) == ((~t8) & 0x0F)) &&
+            ((t7 & 0x0F) == ((~t8 >> 4) & 0x0F));
+
+        if (trailerValid)
+        {
+            for (int b = 0; b < 4; ++b)
             {
-                const auto& bd = mem[s][b];
-
-                // Inizializza a zero: blocchi non letti → 16 byte 0x00
-                std::vector<uint8_t> row(16, 0x00);
-                if (bd.ok && bd.data.size() == 16)
-                    row = bd.data;
-
-                // Stessa iniezione chiavi del formato MCT
-                if (b == 3)
-                {
-                    if (auth.keyA.size() == 6)
-                        std::copy(auth.keyA.begin(), auth.keyA.end(), row.begin());
-                    if (auth.keyB.size() == 6)
-                        std::copy(auth.keyB.begin(), auth.keyB.end(), row.begin() + 10);
-                }
-
-                out.write(reinterpret_cast<const char*>(row.data()), 16);
+                accC1[b] = (t7 >> (4 + b)) & 1;
+                accC2[b] = (t8 >> b) & 1;
+                accC3[b] = (t8 >> (4 + b)) & 1;
+                accIdx[b] = (accC1[b] << 2) | (accC2[b] << 1) | accC3[b];
             }
         }
-    }
 
-    std::cout << "\n" << GREEN << "[+]" << RESET
-        << " Salvato: " << CYAN << filename << RESET << "\n";
-    std::cout << "    Blocchi letti: " << GREEN << nOk << "/64" << RESET
-        << "  Non letti: " << (nFail > 0 ? RED : GRAY) << nFail << RESET
-        << "\n\n";
+        static const char* dataAccShort[8] = {
+            "r/w/inc/dec  KeyA|B",
+            "r+dec  KeyA|B  (value NR)",
+            "r  KeyA|B",
+            "r/w  KeyB",
+            "r:KeyA|B  w:KeyB",
+            "r  KeyB",
+            "r+dec:A|B  inc:B  (value)",
+            "blocked"
+        };
+        static const char* trailAccShort[8] = {
+            "KeyB readable",
+            "transport  acc:A  keyB:rw-A",
+            "acc-r:A  keyB-r:A",
+            "w-KeyA:B  acc:B  keyB:B",
+            "w-KeyA:B  acc-r:A|B  keyB:B",
+            "acc:B",
+            "write-protect  acc-r:A|B",
+            "locked  acc-r:A|B"
+        };
+
+        std::cout << BOLD << "[Sector " << s << "]" << RESET << "\n";
+        std::cout << "  Blk  Abs | 00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F | ASCII            | [CxN] Access\n";
+        std::cout << "  --------   ------------------------------------------------   ----------------   -------------\n";
+
+        for (int b = 0; b < MifareClassic::BLOCKS_PER_SECTOR; ++b)
+        {
+            const int absBlock = s * 4 + b;
+            const int blockOffset = baseOffset + (b * 16);
+
+            std::cout << "  B" << b << " [" << hx(absBlock) << "]  | ";
+
+            const bool isMfr = (s == 0 && b == 0);
+            const bool isTrailer = (b == 3);
+
+            // Verifica se è un value block
+            bool isValue = false;
+            if (!isMfr && !isTrailer)
+            {
+                isValue = true;
+                for (int i = 0; i < 4 && isValue; ++i)
+                {
+                    if (data[blockOffset + i] != data[blockOffset + i + 8]) isValue = false;
+                    if (data[blockOffset + i] != (uint8_t)~data[blockOffset + i + 4]) isValue = false;
+                }
+                if (data[blockOffset + 12] != data[blockOffset + 14]) isValue = false;
+                if (data[blockOffset + 12] != (uint8_t)~data[blockOffset + 13]) isValue = false;
+            }
+
+            auto byteColor = [&](int i) -> const char* {
+                if (isMfr)     return i < 4 ? UID : MFR_DATA;
+                if (isTrailer) return i < 6 ? KEY_A : i < 10 ? ACCESS_BITS : KEY_B;
+                if (isValue)   return i < 4 ? VALUE_BLOCK : i < 8 ? GRAY : i < 12 ? VALUE_BLOCK : VALUE_BLOCK;
+                return DATA_BLOCK;
+                };
+
+            // Hex colorato
+            for (int i = 0; i < 16; ++i)
+            {
+                if (i == 8) std::cout << " ";
+                std::cout << byteColor(i) << hx(data[blockOffset + i]) << RESET << " ";
+            }
+
+            // ASCII
+            std::cout << "| ";
+            for (int i = 0; i < 16; ++i)
+            {
+                uint8_t byte = data[blockOffset + i];
+                std::cout << (std::isprint(byte) ? (char)byte : '.');
+            }
+
+            // Colonna Access
+            std::cout << " | ";
+            if (isMfr)
+            {
+                std::cout << "[mfr] read-only";
+            }
+            else if (!trailerValid)
+            {
+                std::cout << "INVALID acc bits!";
+            }
+            else
+            {
+                const char* desc = isTrailer ? trailAccShort[accIdx[b]] : dataAccShort[accIdx[b]];
+                std::cout << GRAY << "[" << (int)accC1[b] << (int)accC2[b] << (int)accC3[b] << "] " << RESET << desc;
+            }
+
+            std::cout << "\n";
+        }
+        std::cout << "\n";
+    }
 }
 
 // ---------------------------------------------------------------------------
 // cmdWrite
-//
-// Sintassi: write -s <sector> -b <block> -d <32 hex chars>
-//
-// Scrive 16 byte su un blocco. Rifiuta S0/B0 (blocco produttore).
-// Attenzione al sector trailer (blocco 3): contiene KeyA, Access Bits, KeyB.
-// Una scrittura errata può rendere il settore inaccessibile.
 // ---------------------------------------------------------------------------
 void CommandParser::cmdWrite(std::istringstream& args)
 {
+    using namespace Color;
+    
     int         sector   = -1;
     int         relBlock = -1;
     std::string hexData;
@@ -1020,11 +1049,12 @@ void CommandParser::cmdWrite(std::istringstream& args)
         return;
     }
 
-    // Avviso per sector trailer (blocco 3): scrittura rischiosa
     if (relBlock == 3)
     {
         std::cout << "[!] ATTENZIONE: stai scrivendo sul sector trailer (blocco 3).\n"
-                  << "    Contiene KeyA + Access Bits + KeyB. Una scrittura errata\n"
+                  << "    Contiene " << KEY_A << "KeyA" << RESET << " + "
+                  << ACCESS_BITS << "Access Bits" << RESET << " + "
+                  << KEY_B << "KeyB" << RESET << ". Una scrittura errata\n"
                   << "    puo' rendere il settore " << sector << " inaccessibile.\n"
                   << "    Continua? [s/N] ";
         std::string confirm;
@@ -1032,7 +1062,6 @@ void CommandParser::cmdWrite(std::istringstream& args)
         if (confirm != "s" && confirm != "S") { std::cout << "Annullato.\n"; return; }
     }
 
-    // Parse hex data
     std::vector<uint8_t> data;
     try   { data = Hex::stringToBytes(hexData); }
     catch (const std::invalid_argument& e)
@@ -1064,16 +1093,11 @@ void CommandParser::cmdWrite(std::istringstream& args)
 
 // ---------------------------------------------------------------------------
 // run
-//
-// Loop principale:
-//   1. Aspetta un tag (waitAndConnect)
-//   2. Legge ATR e tipo carta
-//   3. Crea un'istanza di MifareClassic (reset state ad ogni nuovo tag)
-//   4. Shell interattiva finché il tag è presente
-//   5. Alla rimozione del tag torna al punto 1
 // ---------------------------------------------------------------------------
 void CommandParser::run()
 {
+    using namespace Color;
+    
     if (!initializeReader())
         return;
 
@@ -1103,7 +1127,6 @@ void CommandParser::run()
             std::string line;
             std::getline(std::cin, line);
 
-            // Ricontrolla dopo l'input: il tag potrebbe essere stato rimosso
             if (m_reader->getCardInfo().cardState != "Present")
                 break;
 
@@ -1118,7 +1141,8 @@ void CommandParser::run()
             else if (cmd == "authenticate") { cmdAuthenticate(iss); }
             else if (cmd == "read")         { cmdRead(iss); }
             else if (cmd == "write")        { cmdWrite(iss); }
-            else if (cmd == "dump")         { cmdDumpFile(iss); }
+            else if (cmd == "dump")         { cmdDumpFile(); }
+            else if (cmd == "readdump")     { cmdReadDump(iss); }
             else if (!cmd.empty())
                 std::cout << "[!] Comando sconosciuto. Digita 'help'.\n";
         }
@@ -1132,4 +1156,136 @@ void CommandParser::run()
 
     m_reader->disconnect();
     m_reader->releaseContext();
+}
+
+// ---------------------------------------------------------------------------
+// run
+// ---------------------------------------------------------------------------
+void CommandParser::run2()
+{
+    using namespace Color;
+
+    if (!initializeReader())
+        return;
+
+    std::string selectedReader = m_reader->listReaders()[0];
+    bool shouldExit = false;
+    bool tagPresent = false;
+
+    std::cout << "\n" << BOLD << "========== MFTOOL Interactive Shell ==========" << RESET << "\n";
+    std::cout << "Type 'help' for commands, 'exit' to quit.\n";
+    std::cout << "Offline commands: help, readdump, exit\n";
+    std::cout << "Tag required: scan, read, write, dump, tagid, authenticate\n\n";
+
+    // Shell interattiva sempre attiva
+    while (!shouldExit)
+    {
+        // Prompt diverso in base alla presenza del tag
+        if (tagPresent)
+            std::cout << BOLD << "[TAG]" << RESET << " > ";
+        else
+            std::cout << "> ";
+
+        std::string line;
+        std::getline(std::cin, line);
+
+        std::istringstream iss(line);
+        std::string cmd;
+        iss >> cmd;
+
+        // =====================================================================
+        // COMANDI OFFLINE - funzionano sempre
+        // =====================================================================
+        if (cmd == "exit")
+        {
+            shouldExit = true;
+            continue;
+        }
+        else if (cmd == "help")
+        {
+            showHelp();
+            continue;
+        }
+        else if (cmd == "readdump")
+        {
+            cmdReadDump(iss);
+            continue;
+        }
+
+        // =====================================================================
+        // COMANDO SPECIALE: connect
+        // =====================================================================
+        else if (cmd == "connect")
+        {
+            std::cout << "Waiting for tag...\n";
+            if (m_reader->waitAndConnect(selectedReader, 5))  // 5 sec timeout
+            {
+                m_mifare = std::make_unique<MifareClassic>(*m_reader);
+                CardInfo info = m_reader->getCardInfo();
+
+                std::cout << "\n[+] TAG DETECTED\n";
+                std::cout << "    ATR:  " << Hex::bytesToString(info.atr) << "\n";
+                std::cout << "    TYPE: " << ATRParser::getCardType(info.atr) << "\n\n";
+
+                tagPresent = true;
+            }
+            else
+            {
+                std::cout << "[-] No tag detected (timeout)\n";
+                tagPresent = false;
+            }
+            continue;
+        }
+
+        // =====================================================================
+        // COMANDI CHE RICHIEDONO TAG
+        // =====================================================================
+
+        // Verifica presenza tag prima di eseguire comandi che lo richiedono
+        if (!tagPresent || !m_mifare)
+        {
+            if (cmd == "scan" || cmd == "read" || cmd == "write" ||
+                cmd == "dump" || cmd == "tagid" || cmd == "authenticate")
+            {
+                std::cout << "[!] Nessun tag presente. Usa 'connect' per rilevare un tag.\n";
+                continue;
+            }
+
+            if (!cmd.empty())
+            {
+                std::cout << "[!] Comando sconosciuto. Digita 'help'.\n";
+            }
+            continue;
+        }
+
+        // Controlla se il tag è ancora presente
+        CardInfo currentInfo = m_reader->getCardInfo();
+        if (currentInfo.cardState != "Present")
+        {
+            std::cout << "\n[-] Tag removed\n\n";
+            m_reader->disconnect();
+            m_mifare.reset();
+            tagPresent = false;
+            continue;
+        }
+
+        // Esegui comandi che richiedono il tag
+        if (cmd == "tagid") { cmdTagID(); }
+        else if (cmd == "scan") { cmdScan(iss); }
+        else if (cmd == "authenticate") { cmdAuthenticate(iss); }
+        else if (cmd == "read") { cmdRead(iss); }
+        else if (cmd == "write") { cmdWrite(iss); }
+        else if (cmd == "dump") { cmdDumpFile(); }
+        else if (!cmd.empty())
+        {
+            std::cout << "[!] Comando sconosciuto. Digita 'help'.\n";
+        }
+    }
+
+    if (tagPresent)
+    {
+        m_reader->disconnect();
+    }
+    m_reader->releaseContext();
+    std::cout << "\n[+] Goodbye!\n";
 }

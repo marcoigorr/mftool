@@ -21,6 +21,7 @@ public:
     ~CommandParser();
 
     void run();
+	void run2(); 
 
 private:
     std::unique_ptr<PCSCReader>    m_reader;
@@ -41,9 +42,11 @@ private:
     //   Con -b:   decodifica dettagliata del singolo blocco.
     void cmdRead(std::istringstream& args);
 
-    // dump [-k <keyfile>] [-f mct|bin]
-    //   Legge tutti i 64 blocchi e salva in dumps/<UID>.mct (o .bin).
-    void cmdDumpFile(std::istringstream& args);
+    // dump
+    //   Legge tutti i 64 blocchi e salva in dumps/Dump_<UID>.mfd.
+    void cmdDumpFile();
+
+    void cmdReadDump(std::istringstream& args);  // ← NUOVO
 
     // write -s <settore 0-15> -b <blocco 0-3> -d <32 hex chars>
     //   Scrive 16 byte. Auto-autentica tramite stato memorizzato o keyfile.

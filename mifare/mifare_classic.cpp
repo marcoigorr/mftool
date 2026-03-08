@@ -79,10 +79,6 @@ bool MifareClassic::authenticate(int sector, const std::vector<uint8_t>& key, ch
 {
     uint8_t keyTypeByte = (keyType == 'B') ? KEY_TYPE_B : KEY_TYPE_A;
 
-    Logger::debug("AUTH S" + std::to_string(sector)
-                  + " Key" + (keyTypeByte == KEY_TYPE_B ? "B" : "A")
-                  + " [" + Hex::bytesToString(key) + "]");
-
     // Step 1: LOAD KEY (FF 82 00 00 06 [key 6B])
     auto loadResp = m_reader.transmitAPDU(
         PCSCReader::buildAPDU(0xFF, 0x82, 0x00, 0x00, key)

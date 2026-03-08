@@ -5,7 +5,7 @@
 int main() {
     try {
 		CommandParser parser;
-		parser.run();
+		parser.run2();
 		return 0;
 	}
 	catch (const std::exception& e) {
