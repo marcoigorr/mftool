@@ -802,7 +802,7 @@ void CommandParser::cmdDumpFile(std::istringstream& args)
             std::ostringstream ss;
             for (int i = 0; i < 4; ++i)
                 ss << std::uppercase << std::hex
-                << std::setw(2) << std::setfill('0') << (int)resp.data[i];
+                   << std::setw(2) << std::setfill('0') << (int)resp.data[i];
             uidStr = ss.str();
         }
     }
@@ -892,10 +892,6 @@ void CommandParser::cmdDumpFile(std::istringstream& args)
     // -------------------------------------------------------------------------
     if (fmt == "mct")
     {
-        // Apertura in modalità BINARIA obbligatoria:
-        // il testo aperto in modalità default su Windows converte \n → \r\n.
-        // I parser MCT (MIFARE Classic Tool, MifareOneTool, ecc.) si aspettano
-        // LF-only e rifiutano il file con CR presenti.
         std::ofstream out(filename, std::ios::binary);
         if (!out)
         {
@@ -903,27 +899,45 @@ void CommandParser::cmdDumpFile(std::istringstream& args)
             return;
         }
 
-        // Usa ostringstream per la conversione hex: evita che std::hex e
-        // std::uppercase (sticky) contaminino lo stream e stampino i numeri
-        // di settore in esadecimale (settore 10 → "a", 11 → "b", ecc.).
         auto blockHex = [](const std::vector<uint8_t>& d) -> std::string {
             std::ostringstream ss;
             for (uint8_t b : d)
                 ss << std::uppercase << std::hex
-                << std::setw(2) << std::setfill('0') << (int)b;
+                   << std::setw(2) << std::setfill('0') << (int)b;
             return ss.str();
-            };
+        };
 
         for (int s = 0; s < MifareClassic::SECTORS; ++s)
         {
             out << "+Sector: " << s << "\n";
+            const auto& auth = m_mifare->getSectorAuth(s);
+
             for (int b = 0; b < MifareClassic::BLOCKS_PER_SECTOR; ++b)
             {
                 const auto& bd = mem[s][b];
-                out << (bd.ok && bd.data.size() == 16
-                    ? blockHex(bd.data)
-                    : "--------------------------------")
-                    << "\n";
+
+                if (!bd.ok || bd.data.size() != 16)
+                {
+                    out << "--------------------------------\n";
+                    continue;
+                }
+
+                std::vector<uint8_t> row = bd.data;
+
+                // Sector trailer: l'IC maschera Key A come 0x00 nella risposta
+                // READ BINARY (hardware by design, non bypassabile via PC/SC).
+                // Key B può essere 0x00 se le AC non la rendono leggibile con
+                // il tipo di chiave usato. Iniettare le chiavi note da m_authState
+                // produce un dump completo e reimportabile in MCT / MifareOneTool.
+                if (b == 3)
+                {
+                    if (auth.keyA.size() == 6)
+                        std::copy(auth.keyA.begin(), auth.keyA.end(), row.begin());
+                    if (auth.keyB.size() == 6)
+                        std::copy(auth.keyB.begin(), auth.keyB.end(), row.begin() + 10);
+                }
+
+                out << blockHex(row) << "\n";
             }
         }
     }
@@ -936,16 +950,31 @@ void CommandParser::cmdDumpFile(std::istringstream& args)
             return;
         }
 
-        constexpr char zeros[16] = {};
         for (int s = 0; s < MifareClassic::SECTORS; ++s)
+        {
+            const auto& auth = m_mifare->getSectorAuth(s);
+
             for (int b = 0; b < MifareClassic::BLOCKS_PER_SECTOR; ++b)
             {
                 const auto& bd = mem[s][b];
+
+                // Inizializza a zero: blocchi non letti → 16 byte 0x00
+                std::vector<uint8_t> row(16, 0x00);
                 if (bd.ok && bd.data.size() == 16)
-                    out.write(reinterpret_cast<const char*>(bd.data.data()), 16);
-                else
-                    out.write(zeros, 16);
+                    row = bd.data;
+
+                // Stessa iniezione chiavi del formato MCT
+                if (b == 3)
+                {
+                    if (auth.keyA.size() == 6)
+                        std::copy(auth.keyA.begin(), auth.keyA.end(), row.begin());
+                    if (auth.keyB.size() == 6)
+                        std::copy(auth.keyB.begin(), auth.keyB.end(), row.begin() + 10);
+                }
+
+                out.write(reinterpret_cast<const char*>(row.data()), 16);
             }
+        }
     }
 
     std::cout << "\n" << GREEN << "[+]" << RESET

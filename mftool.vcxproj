@@ -39,8 +39,6 @@
     <ClInclude Include="utils\pcsc_utils.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="dumps\dump_3A165647.dump" />
-    <None Include="dumps\dump_3A165647_160c.dump" />
     <None Include="dumps\dump_510c.mct" />
     <None Include="keys\Dump_3A165647.keys" />
     <None Include="keys\found.keys" />
