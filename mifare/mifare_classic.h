@@ -1,114 +1,156 @@
+/**
+ * @file mifare_classic.h
+ * @brief Gestione di tag MIFARE Classic 1K tramite comandi APDU PC/SC.
+ */
 #pragma once
-#include <vector>
-#include <string>
-#include <array>
-#include <cstdint>
 #include "../core/pcsc_reader.h"
+#include <vector>
+#include <array>
+#include <string>
 
-// ---------------------------------------------------------------------------
-// SectorAuth
-//
-// Credenziali di autenticazione memorizzate per un singolo settore.
-// Usate per la riautenticazione automatica quando la sessione RF scade
-// (SW 69 82 = security status not satisfied).
-// ---------------------------------------------------------------------------
+/// @brief Alias per una chiave MIFARE da 6 byte.
+using MifareKey = std::array<uint8_t, 6>;
+
+/**
+ * @brief Stato di autenticazione memorizzato per un singolo settore MIFARE.
+ *
+ * Conserva le chiavi scoperte (KeyA e/o KeyB) e il tipo di chiave
+ * usata nell'ultima autenticazione riuscita.
+ */
 struct SectorAuth
 {
-    bool                 valid   = false;
-    char                 keyType = 'A';   // tipo attivo per la sessione corrente
-    std::vector<uint8_t> key;             // chiave attiva (per reAuth automatico)
+    bool valid = false;   ///< true se il settore è stato autenticato con successo.
+    char keyType = 'A';   ///< Tipo di chiave usata nell'ultima autenticazione ('A' o 'B').
+    MifareKey key{};      ///< Chiave attiva nell'ultima autenticazione.
+    MifareKey keyA{};     ///< KeyA del settore, se già scoperta.
+    MifareKey keyB{};     ///< KeyB del settore, se già scoperta.
 
-    // Chiavi scoperte e verificate per tipo — persistenti indipendentemente
-    // dalla sessione corrente. Popolate da authenticate() / tryAuthenticate().
-    std::vector<uint8_t> keyA;            // Key A che ha funzionato su questo settore
-    std::vector<uint8_t> keyB;            // Key B che ha funzionato su questo settore
+    /**
+     * @brief Indica se la KeyA è stata scoperta (almeno un byte non zero).
+     * @return true se keyA contiene una chiave valida.
+     */
+    bool hasKeyA() const { return keyA[0] != 0 || keyA[1] != 0 || keyA[2] != 0 ||
+                                   keyA[3] != 0 || keyA[4] != 0 || keyA[5] != 0; }
 
-    bool hasKeyA() const { return !keyA.empty(); }
-    bool hasKeyB() const { return !keyB.empty(); }
+    /**
+     * @brief Indica se la KeyB è stata scoperta (almeno un byte non zero).
+     * @return true se keyB contiene una chiave valida.
+     */
+    bool hasKeyB() const { return keyB[0] != 0 || keyB[1] != 0 || keyB[2] != 0 ||
+                                   keyB[3] != 0 || keyB[4] != 0 || keyB[5] != 0; }
 };
 
-// ---------------------------------------------------------------------------
-// MifareClassic
-//
-// Operazioni di alto livello su carte MIFARE Classic 1K / 4K.
-// Gestisce l'autenticazione per-settore, la riautenticazione automatica
-// e l'accesso in lettura/scrittura ai blocchi.
-//
-// Struttura MIFARE Classic 1K:
-//   16 settori x 4 blocchi = 64 blocchi totali (0-63)
-//   Ogni blocco = 16 byte
-//   Blocco 3 di ogni settore = sector trailer (KeyA | Access Bits | KeyB)
-//
-// Autenticazione (CRYPTO1, 3-pass):
-//   1. LOAD KEY       (FF 82) - carica la chiave nel reader (slot 0)
-//   2. GENERAL AUTH   (FF 86) - autentica il settore sulla carta
-//   La sessione è valida finché il campo RF rimane attivo.
-//   Su SW 69 82, readBlock/writeBlock eseguono riautenticazione automatica.
-//
-// Riferimento APDU: ACR122U API v2.04
-// ---------------------------------------------------------------------------
+/**
+ * @brief Interfaccia di alto livello per tag MIFARE Classic 1K.
+ *
+ * Gestisce autenticazione, lettura blocchi e caricamento chiavi
+ * tramite il layer PC/SC fornito da PCSCReader.
+ */
 class MifareClassic
 {
 public:
-    static constexpr int     SECTORS           = 16;
-    static constexpr int     BLOCKS_PER_SECTOR = 4;
-    static constexpr int     BLOCK_SIZE        = 16;
-    static constexpr uint8_t KEY_TYPE_A        = 0x60;  // P2 per GENERAL AUTHENTICATE
-    static constexpr uint8_t KEY_TYPE_B        = 0x61;
+    static constexpr int SECTORS           = 16;                          
+    static constexpr int BLOCKS_PER_SECTOR = 4;                           
+    static constexpr int TOTAL_BLOCKS      = SECTORS * BLOCKS_PER_SECTOR; 
+    static constexpr int BLOCK_SIZE        = 16;                          
+    static constexpr int KEY_SIZE          = 6;                           
 
+    /**
+     * @brief Costruttore. Associa il reader PC/SC da usare per le trasmissioni APDU.
+     *
+     * @param reader Riferimento al PCSCReader già connesso alla carta.
+     */
     explicit MifareClassic(PCSCReader& reader);
 
-    // -------------------------------------------------------------------------
-    // Authentication
-    // -------------------------------------------------------------------------
-
-    // Autentica il settore con la chiave specificata.
-    // Aggiorna le credenziali memorizzate solo in caso di successo.
-    bool authenticate(int sector, const std::vector<uint8_t>& key, char keyType = 'A');
-
-    // Prova ogni chiave dalla lista, prima con KeyA poi con KeyB.
-    // Si ferma al primo successo. Ideale per l'attacco a dizionario.
-    bool tryAuthenticate(int sector, const std::vector<std::vector<uint8_t>>& keys);
-
-    // True se esiste uno stato di autenticazione valido per il settore.
-    bool isAuthenticated(int sector) const;
-
-    // Restituisce le credenziali memorizzate (valido anche se valid=false).
-    const SectorAuth& getSectorAuth(int sector) const;
-
-    // Commuta il tipo attivo usando la chiave gia' scoperta per quel tipo.
-    // Restituisce false se il tipo richiesto non e' ancora stato trovato.
-    bool switchKeyType(int sector, char keyType);
-
-    // -------------------------------------------------------------------------
-    // Read / Write
-    // -------------------------------------------------------------------------
-
-    // READ BINARY (FF B0): legge 16 byte da un blocco.
-    // Blocco relativo: 0-3 all'interno del settore.
-    // Auto-riautentica su SW 69 82 usando le credenziali memorizzate.
-    APDUResponse readBlock(int sector, int relBlock);
-
-    // UPDATE BINARY (FF D6): scrive 16 byte su un blocco.
-    // Rifiuta S0/B0 (blocco produttore, read-only su MIFARE Classic).
-    // Auto-riautentica su SW 69 82 come readBlock.
-    APDUResponse writeBlock(int sector, int relBlock, const std::vector<uint8_t>& data);
-
-    // -------------------------------------------------------------------------
-    // Static helpers
-    // -------------------------------------------------------------------------
-
-    // Blocco assoluto = settore * 4 + bloccoRelativo  (range: 0-63)
+    /**
+     * @brief Calcola il numero di blocco assoluto dato il settore e il blocco relativo.
+     *
+     * @param sector   Indice del settore (0-15).
+     * @param relBlock Indice del blocco all'interno del settore (0-3).
+     * @return Numero di blocco assoluto (0-63).
+     */
     static int toAbsBlock(int sector, int relBlock);
 
-    // Carica chiavi da file .keys (una per riga, 12 hex chars = 6 byte).
-    // Ignora righe vuote e righe che iniziano con '#'.
-    static std::vector<std::vector<uint8_t>> loadKeys(const std::string& path);
+    /**
+     * @brief Carica un elenco di chiavi MIFARE da un file di testo.
+     *
+     * Il file deve contenere una chiave per riga in formato hex a 12 caratteri
+     * (es. "A0A1A2A3A4A5"). Le righe vuote e quelle che iniziano con '#' vengono ignorate.
+     *
+     * @param path Percorso del file chiavi.
+     * @return Vettore di MifareKey caricate; vuoto se il file non esiste o è privo di chiavi valide.
+     */
+    static std::vector<MifareKey> loadKeys(const std::string& path);
+
+    /**
+     * @brief Autentica un settore con una chiave e un tipo specificati.
+     *
+     * Esegue in sequenza LOAD KEY e GENERAL AUTHENTICATE tramite APDU.
+     * Se riuscita, aggiorna lo stato interno del settore.
+     *
+     * @param sector  Indice del settore (0-15).
+     * @param key     Chiave a 6 byte da usare per l'autenticazione.
+     * @param keyType Tipo di chiave: 'A' per Key A, 'B' per Key B.
+     * @return true se l'autenticazione è riuscita, false altrimenti.
+     */
+    bool authenticate(int sector, const MifareKey& key, char keyType);
+
+    /**
+     * @brief Prova ad autenticare un settore con una lista di chiavi (KeyA poi KeyB).
+     *
+     * Itera su tutti i tipi di chiave per ogni chiave fornita e si ferma
+     * al primo tentativo riuscito.
+     *
+     * @param sector Indice del settore (0-15).
+     * @param keys   Vettore di chiavi candidate da provare.
+     * @return true se almeno una combinazione chiave/tipo ha avuto successo.
+     */
+    bool tryAuthenticate(int sector, const std::vector<MifareKey>& keys);
+
+    /**
+     * @brief Verifica se un settore è già stato autenticato.
+     *
+     * @param sector Indice del settore (0-15).
+     * @return true se l'autenticazione del settore è valida.
+     */
+    bool isAuthenticated(int sector) const;
+
+    /**
+     * @brief Restituisce SectorAuth di un settore.
+     *
+     * @param sector Indice del settore (0-15).
+     * @return Riferimento costante a SectorAuth; restituisce un oggetto vuoto
+     *         se l'indice è fuori range.
+     */
+    const SectorAuth& getSectorAuth(int sector) const;
+
+    /**
+     * @brief Legge un blocco di 16 byte da un settore autenticato.
+     *
+     * In caso di errore di autenticazione (SW 69 82 o 63 00), tenta
+     * automaticamente una ri-autenticazione con le chiavi memorizzate nel SectorAuth del settore.
+     *
+     * @param sector   Indice del settore (0-15).
+     * @param relBlock Indice del blocco all'interno del settore (0-3).
+     * @return APDUResponse con i 16 byte letti nel campo data, oppure
+     *         con success=false e i codici SW in caso di errore.
+     */
+    APDUResponse readBlock(int sector, int relBlock);
 
 private:
-    PCSCReader&                      m_reader;
-    std::array<SectorAuth, SECTORS>  m_authState;
+    PCSCReader& m_reader;                          ///< Reader PC/SC utilizzato per le trasmissioni.
+    std::array<SectorAuth, SECTORS> m_authState;   ///< Stato di autenticazione per ogni settore.
 
-    // Riautentica usando le credenziali già in m_authState (senza keyfile)
+    /**
+     * @brief Ri-autentica un settore usando le chiavi memorizzate nello stato interno.
+     *
+     * Prova prima la chiave/tipo attivo, poi l'alternativo se disponibile.
+     *
+     * @param sector Indice del settore (0-15).
+     * @return true se la ri-autenticazione è riuscita.
+     */
     bool reAuth(int sector);
+
+    static constexpr uint8_t KEY_TYPE_A = 0x60;
+    static constexpr uint8_t KEY_TYPE_B = 0x61;
 };

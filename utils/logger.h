@@ -1,3 +1,7 @@
+/**
+ * @file logger.h
+ * @brief Classe Logger per la stampa di messaggi diagnostici con livelli di severità.
+ */
 #pragma once
 #include <iostream>
 #include <string>
@@ -16,37 +20,77 @@
     #undef INFO
 #endif
 
+/**
+ * @brief Logger statico con filtraggio per livello di severità.
+ *
+ * Tutti i metodi sono statici; non è necessario istanziare la classe.
+ * Il livello corrente filtra i messaggi con priorità inferiore.
+ */
 class Logger
 {
 public:
+    /**
+     * @brief Livelli di severità del log, in ordine crescente.
+     */
     enum class LogLevel {
-        DEBUG   = 0,
-        INFO    = 1,
-        WARNING = 2,
-        ERROR   = 3
+        DEBUG   = 0, ///< Messaggi di debug dettagliati.
+        INFO    = 1, ///< Informazioni operative generali.
+        WARNING = 2, ///< Avvisi non bloccanti.
+        ERROR   = 3  ///< Errori che compromettono l'operazione corrente.
     };
 
+    /**
+     * @brief Imposta il livello minimo di log visualizzato.
+     *
+     * @param level Livello di soglia; i messaggi con priorità inferiore vengono soppressi.
+     */
     static void setLogLevel(LogLevel level) { currentLogLevel = level; }
-    static LogLevel getLogLevel()           { return currentLogLevel; }
 
+    /**
+     * @brief Restituisce il livello di log attualmente attivo.
+     *
+     * @return Livello di log corrente.
+     */
+    static LogLevel getLogLevel() { return currentLogLevel; }
+
+    /**
+     * @brief Stampa un messaggio di debug su stdout (solo se il livello è DEBUG).
+     *
+     * @param msg Testo del messaggio.
+     */
     static void debug(const std::string& msg)
     {
         if (currentLogLevel <= LogLevel::DEBUG)
             std::cout << "[DEBUG] " << msg << "\n";
     }
 
+    /**
+     * @brief Stampa un messaggio informativo su stdout (se il livello è <= INFO).
+     *
+     * @param msg Testo del messaggio.
+     */
     static void info(const std::string& msg)
     {
         if (currentLogLevel <= LogLevel::INFO)
             std::cout << "[INFO]  " << msg << "\n";
     }
 
+    /**
+     * @brief Stampa un avviso su stdout (se il livello è <= WARNING).
+     *
+     * @param msg Testo del messaggio.
+     */
     static void warning(const std::string& msg)
     {
         if (currentLogLevel <= LogLevel::WARNING)
             std::cout << "[WARN]  " << msg << "\n";
     }
 
+    /**
+     * @brief Stampa un messaggio di errore su stderr (se il livello è <= ERROR).
+     *
+     * @param msg Testo del messaggio.
+     */
     static void error(const std::string& msg)
     {
         if (currentLogLevel <= LogLevel::ERROR)
@@ -54,5 +98,5 @@ public:
     }
 
 private:
-    static LogLevel currentLogLevel;
+    static Logger::LogLevel currentLogLevel; ///< Livello di log corrente (default: DEBUG).
 };

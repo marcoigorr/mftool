@@ -1,25 +1,11 @@
+/**
+ * @file atr_parser.cpp
+ * @brief Implementazione del parser ATR per l'identificazione del tipo di carta NFC.
+ */
 #include "atr_parser.h"
 #include "hex.h"
-#include <sstream>
-#include <iomanip>
 
-// ---------------------------------------------------------------------------
-// getCardType
-//
-// Identifica il tipo di carta dal ATR generato dall'ACR122U.
-//
-// Struttura ATR per carte ISO 14443-A (NXP) su ACR122U (20 byte):
-//   3B 8F 80 01 80 4F 0C A0 00 00 03 06 [D0] [D1] [D2] [D3] [D4] [D5] [D6] [TCK]
-//
-// Il byte D2 (indice 14) identifica il tipo di carta:
-//   0x01 = MIFARE Classic 1K
-//   0x02 = MIFARE Classic 4K
-//   0x03 = MIFARE Ultralight / NTAG
-//   0x04 = MIFARE Classic Mini
-//   0x10 = MIFARE DESFire
-//
-// Riferimento: ACR122U Application Programming Interface V2.04
-// ---------------------------------------------------------------------------
+
 std::string ATRParser::getCardType(const std::vector<uint8_t>& atr)
 {
     if (atr.empty())

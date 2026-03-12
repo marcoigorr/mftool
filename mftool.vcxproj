@@ -25,6 +25,7 @@
     <ClCompile Include="mifare\mifare_classic.cpp" />
     <ClCompile Include="mifare\value_block.cpp" />
     <ClCompile Include="utils\atr_parser.cpp" />
+    <ClCompile Include="utils\hex.cpp" />
     <ClCompile Include="utils\logger.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -33,7 +34,6 @@
     <ClInclude Include="mifare\mifare_classic.h" />
     <ClInclude Include="mifare\value_block.h" />
     <ClInclude Include="utils\atr_parser.h" />
-    <ClInclude Include="utils\endian.h" />
     <ClInclude Include="utils\hex.h" />
     <ClInclude Include="utils\logger.h" />
     <ClInclude Include="utils\pcsc_utils.h" />

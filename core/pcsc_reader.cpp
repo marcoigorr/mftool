@@ -1,105 +1,166 @@
+/**
+ * @file pcsc_reader.cpp
+ * @brief Implementazione del wrapper PC/SC per la comunicazione con lettori e carte NFC.
+ */
 #include "pcsc_reader.h"
 #include "../utils/logger.h"
+#include "../utils/hex.h"
 #include "../utils/pcsc_utils.h"
-#include <iostream>
 #include <thread>
 #include <chrono>
 #include <cstring>
 #include <sstream>
 #include <iomanip>
 
-PCSCReader::PCSCReader() : context(0), cardHandle(0), activeProtocol(0) {}
+/**
+ * @brief Decodifica una coppia SW1/SW2 in testo leggibile.
+ *
+ * @param sw1 Primo byte di stato (SW1).
+ * @param sw2 Secondo byte di stato (SW2).
+ * @return Stringa descrittiva dello stato.
+ */
+std::string PCSCReader::decodeSW(uint8_t sw1, uint8_t sw2)
+{
+    if (sw1 == 0x90 && sw2 == 0x00) return "Success";
+    if (sw1 == 0x61)                return "More bytes available (SW2 = count)";
+
+    // --- MIFARE / ACR122U ---
+    if (sw1 == 0x63 && sw2 == 0x00) return "Authentication failed (wrong key)";
+    if (sw1 == 0x65 && sw2 == 0x81) return "Memory failure (write error)";
+    if (sw1 == 0x69 && sw2 == 0x82) return "Security status not satisfied (sector not authenticated)";
+    if (sw1 == 0x69 && sw2 == 0x86) return "Command not allowed";
+    if (sw1 == 0x6F && sw2 == 0x01) return "Card removed / communication error";
+    if (sw1 == 0x6F && sw2 == 0x04) return "Authentication failed / no suitable key found";
+    if (sw1 == 0x6F && sw2 == 0x12) return "Auth OK but block not readable (access conditions)";
+
+    // --- Standard ISO 7816 ---
+    if (sw1 == 0x67 && sw2 == 0x00) return "Wrong length (Lc/Le incorrect)";
+    if (sw1 == 0x6A && sw2 == 0x81) return "Function not supported";
+    if (sw1 == 0x6A && sw2 == 0x82) return "File/block not found";
+    if (sw1 == 0x6A && sw2 == 0x86) return "Incorrect P1/P2";
+    if (sw1 == 0x6D && sw2 == 0x00) return "INS not supported";
+    if (sw1 == 0x6E && sw2 == 0x00) return "CLA not supported";
+    if (sw1 == 0x6F && sw2 == 0x00) return "Unknown error";
+
+    std::ostringstream ss;
+    ss << "SW " << std::uppercase << std::hex
+       << std::setw(2) << std::setfill('0') << static_cast<int>(sw1)
+       << std::setw(2) << std::setfill('0') << static_cast<int>(sw2);
+    return ss.str();
+}
+
+PCSCReader::PCSCReader() : m_context(0), m_cardHandle(0), m_activeProtocol(0) {}
 
 PCSCReader::~PCSCReader() {
     disconnect();
     releaseContext();
 }
 
-void PCSCReader::establishContext() {
-    LONG status = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &context);
-    if (status != SCARD_S_SUCCESS) {
+void PCSCReader::establishContext()
+{
+    LONG status = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &m_context);
+    if (status != SCARD_S_SUCCESS)
+    {
         Logger::error("Failed to establish context: " + stringifyError(status));
         exit(1);
     }
     Logger::info("Context established");
 }
 
-void PCSCReader::releaseContext() {
-    if (context != 0) {
-        SCardReleaseContext(context);
-        context = 0;
+void PCSCReader::releaseContext()
+{
+    if (m_context != 0)
+    {
+        SCardReleaseContext(m_context);
+        m_context = 0;
     }
 }
 
-std::vector<std::string> PCSCReader::listReaders() {
-    LPSTR reader = NULL;
+std::vector<std::string> PCSCReader::listReaders()
+{
+    LPSTR reader = nullptr;
     DWORD count = SCARD_AUTOALLOCATE;
-    LONG status = SCardListReadersA(context, NULL, (LPSTR)&reader, &count);
+    LONG status = SCardListReadersA(m_context, nullptr, (LPSTR)&reader, &count);
 
-    if (status != SCARD_S_SUCCESS) {
+    if (status != SCARD_S_SUCCESS)
+    {
         Logger::error("Failed to list readers: " + stringifyError(status));
         exit(1);
     }
 
-    std::vector<std::string> foundReaders;
+    std::vector<std::string> found_readers;
+    found_readers.reserve(4); // Pre-allocazione tipica (1-4 lettori)
+    
     LPSTR p = reader;
-    while (*p) {
-        foundReaders.emplace_back(p);
+    while (*p)
+    {
+        found_readers.emplace_back(p);
         p += strlen(p) + 1;
     }
 
-    if (reader != NULL) {
-        SCardFreeMemory(context, reader);
-        reader = NULL;
+    if (reader != nullptr)
+    {
+        SCardFreeMemory(m_context, reader);
     }
 
-    return foundReaders;
+    return found_readers;
 }
 
-bool PCSCReader::waitAndConnect(const std::string& readerName, int timeoutSeconds) {
-    auto startTime = std::chrono::high_resolution_clock::now();
+bool PCSCReader::connect(const std::string& readerName)
+{
+    const LONG status = SCardConnectA(
+        m_context,
+        readerName.c_str(),
+        cShareMode,
+        cPreferredProtocols,
+        &m_cardHandle,
+        &m_activeProtocol
+    );
 
-    while (true) {
-        // SCARD_SHARE_EXCLUSIVE garantisce accesso atomico alla sequenza MIFARE
-        // (LOAD KEY + GENERAL AUTH sono due APDU distinte che devono essere
-        //  consecutive senza interleaving da altri processi).
+    if (status != SCARD_S_SUCCESS)
+    {
+        Logger::error("Failed to connect to card: " + stringifyError(status));
+        return false;
+    }
+    
+    Logger::info("Connected to card");
+    return true;
+}
+
+void PCSCReader::disconnect()
+{
+    if (m_cardHandle != 0)
+    {
+        SCardDisconnect(m_cardHandle, cDispositionAction);
+        m_cardHandle = 0;
+    }
+}
+
+bool PCSCReader::waitAndConnect(const std::string& readerName, int timeoutSeconds)
+{
+    const auto start_time = std::chrono::high_resolution_clock::now();
+
+    while (true)
+    {
         LONG status = SCardConnectA(
-            context,
+            m_context,
             readerName.c_str(),
-            SCARD_SHARE_EXCLUSIVE,
-            SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1,
-            &cardHandle,
-            &activeProtocol
+            cShareMode,
+            cPreferredProtocols,
+            &m_cardHandle,
+            &m_activeProtocol
         );
-
-        // Fallback SHARED se EXCLUSIVE non e' disponibile
-        if (status == SCARD_E_SHARING_VIOLATION)
-        {
-            Logger::debug("EXCLUSIVE sharing violation, fallback to SHARED");
-            status = SCardConnectA(
-                context,
-                readerName.c_str(),
-                SCARD_SHARE_SHARED,
-                SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1,
-                &cardHandle,
-                &activeProtocol
-            );
-        }
 
         if (status == SCARD_S_SUCCESS)
         {
-            Logger::info("Connected to card");
-            Logger::debug("Active protocol: 0x" + [&]{ std::stringstream s;
-                          s << std::hex << activeProtocol; return s.str(); }()
-                          + (activeProtocol == SCARD_PROTOCOL_T0 ? " (T0)"
-                           : activeProtocol == SCARD_PROTOCOL_T1 ? " (T1)" : " (other)"));
+            Logger::info("Tag detected!");
             return true;
         }
 
-        // Card non ancora presente, controlla il timeout prima di riprovare
+        // Verifica timeout
         if (timeoutSeconds > 0)
         {
-            auto elapsed = std::chrono::high_resolution_clock::now() - startTime;
+            auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
             if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() >= timeoutSeconds)
             {
                 Logger::error("Timeout waiting for card");
@@ -107,217 +168,110 @@ bool PCSCReader::waitAndConnect(const std::string& readerName, int timeoutSecond
             }
         }
 
-        // Aspetta prima di riprovare
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 }
 
-
-void PCSCReader::disconnect() {
-    if (cardHandle != 0) {
-        SCardDisconnect(cardHandle, SCARD_LEAVE_CARD);
-        cardHandle = 0;
-    }
-}
-
-CardInfo PCSCReader::getCardInfo() {
+CardInfo PCSCReader::getCardInfo()
+{
     CardInfo info;
 
-    BYTE atr[MAX_ATR_SIZE] = "";
-    DWORD atrLength = sizeof(atr);
-    char readerName[MAX_READERNAME] = "";
-    DWORD readerLength = sizeof(readerName);
+    constexpr DWORD cMaxAtrSize = 33;
+    constexpr DWORD cMaxReaderNameSize = 256;
+    
+    BYTE atr[cMaxAtrSize] = {};
+    DWORD atr_length = sizeof(atr);
+    char reader_name[cMaxReaderNameSize] = {};
+    DWORD reader_length = sizeof(reader_name);
     DWORD state = 0;
     DWORD protocol = 0;
 
-    LONG status = SCardStatusA(
-        cardHandle,
-        readerName,
-        &readerLength,
+    const LONG status = SCardStatusA(
+        m_cardHandle,
+        reader_name,
+        &reader_length,
         &state,
         &protocol,
         atr,
-        &atrLength
+        &atr_length
     );
 
-    if (status == SCARD_S_SUCCESS) {
-        info.readerName = std::string(readerName);
-        info.atr.assign(atr, atr + atrLength);
+    if (status == SCARD_S_SUCCESS)
+    {
+        info.readerName = std::string(reader_name);
+        info.atr.assign(atr, atr + atr_length);
 
-        // Determina lo stato del tag
-        if (state & SCARD_PRESENT) {
-            info.cardState = "Present";
-        } else if (state & SCARD_ABSENT) {
-            info.cardState = "Absent";
-        } else if (state & SCARD_POWERED) {
-            info.cardState = "Powered";
-        } else if (state & SCARD_NEGOTIABLE) {
-            info.cardState = "Negotiable";
-        } else if (state & SCARD_SPECIFIC) {
-            info.cardState = "Specific";
-        }
+        // Decodifica stato carta
+        if (state & SCARD_PRESENT)         info.cardState = "Present";
+        else if (state & SCARD_ABSENT)     info.cardState = "Absent";
+        else if (state & SCARD_POWERED)    info.cardState = "Powered";
+        else if (state & SCARD_NEGOTIABLE) info.cardState = "Negotiable";
+        else if (state & SCARD_SPECIFIC)   info.cardState = "Specific";
     }
 
     return info;
 }
 
-std::vector<uint8_t> PCSCReader::transmit(const std::vector<uint8_t>& command) {
-    const SCARD_IO_REQUEST* pioSendPci;
-    switch (activeProtocol)
+APDUResponse PCSCReader::transmit(const std::vector<uint8_t>& command)
+{
+    APDUResponse response;
+    
+    Logger::debug("Transmit APDU: " + Hex::bytesToString(command, true));
+    
+    std::vector<uint8_t> recv_buffer(300);
+    DWORD recv_length = static_cast<DWORD>(recv_buffer.size());
+
+    // Seleziona struttura I/O in base al protocollo attivo
+    const SCARD_IO_REQUEST* pio_send_pci;
+    switch (m_activeProtocol)
     {
-        case SCARD_PROTOCOL_T0: pioSendPci = SCARD_PCI_T0; break;
-        case SCARD_PROTOCOL_T1: pioSendPci = SCARD_PCI_T1; break;
-        default:
-            Logger::debug("activeProtocol=0x" + [&]{ std::stringstream s;
-                          s << std::hex << activeProtocol; return s.str(); }()
-                          + " non riconosciuto, uso T1 (ACR122U default)");
-            pioSendPci = SCARD_PCI_T1;
+        case SCARD_PROTOCOL_T0:
+            pio_send_pci = SCARD_PCI_T0;
             break;
+        case SCARD_PROTOCOL_T1:
+            pio_send_pci = SCARD_PCI_T1;
+            break;
+        default:
+            response.errorMessage = "Unknown protocol";
+            Logger::error(response.errorMessage);
+            return response;
     }
 
-    std::vector<uint8_t> response(258);
-    DWORD responseLength = static_cast<DWORD>(response.size());
-
     LONG status = SCardTransmit(
-        cardHandle,
-        pioSendPci,
+        m_cardHandle,
+        pio_send_pci,
         command.data(),
         static_cast<DWORD>(command.size()),
         nullptr,
-        response.data(),
-        &responseLength
+        recv_buffer.data(),
+        &recv_length
     );
 
-    // La carta contactless può uscire dal campo RF durante una scansione lunga.
-    // SCardReconnect ripristina il handle senza dover rifare SCardConnect.
-    if (status == SCARD_W_RESET_CARD)
+    if (status != SCARD_S_SUCCESS)
     {
-        Logger::debug("Card reset detected, reconnecting...");
-        LONG reconnStatus = SCardReconnect(
-            cardHandle,
-            SCARD_SHARE_EXCLUSIVE,
-            SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1,
-            SCARD_RESET_CARD,
-            &activeProtocol
-        );
-
-        if (reconnStatus == SCARD_E_SHARING_VIOLATION)
-        {
-            Logger::debug("EXCLUSIVE reconnect failed, fallback to SHARED");
-            reconnStatus = SCardReconnect(
-                cardHandle,
-                SCARD_SHARE_SHARED,
-                SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1,
-                SCARD_RESET_CARD,
-                &activeProtocol
-            );
-        }
-
-        if (reconnStatus != SCARD_S_SUCCESS)
-        {
-            Logger::error("Reconnect failed: " + stringifyError(reconnStatus));
-            return {};
-        }
-
-        Logger::debug("Reconnected, retrying transmit...");
-        responseLength = static_cast<DWORD>(response.size());
-        status = SCardTransmit(
-            cardHandle,
-            pioSendPci,
-            command.data(),
-            static_cast<DWORD>(command.size()),
-            nullptr,
-            response.data(),
-            &responseLength
-        );
+        response.errorMessage = "Transmit failed - " + stringifyError(status);
+        Logger::error(response.errorMessage);
+        return response;
     }
 
-    if (status != SCARD_S_SUCCESS) {
-        std::stringstream hexCode;
-        hexCode << "0x" << std::hex << std::uppercase
-                << std::setw(8) << std::setfill('0') << (unsigned long)status;
-        Logger::error("SCardTransmit failed: " + stringifyError(status)
-                      + " (" + hexCode.str() + ")");
-        return {};
+    recv_buffer.resize(recv_length);
+
+    // Parsing SW1 SW2 (ultimi 2 byte)
+    if (recv_length >= 2)
+    {
+        response.sw1 = recv_buffer[recv_length - 2];
+        response.sw2 = recv_buffer[recv_length - 1];
+        response.success = (response.sw1 == 0x90 && response.sw2 == 0x00);
+        
+        if (recv_length > 2)
+        {
+            response.data.assign(recv_buffer.begin(), recv_buffer.end() - 2);
+        }
+    }
+    else
+    {
+        Logger::error("Invalid response length: " + std::to_string(recv_length));
     }
 
-    response.resize(responseLength);
     return response;
-}
-
-std::vector<uint8_t> PCSCReader::buildAPDU(uint8_t cla, uint8_t ins, uint8_t p1, uint8_t p2,
-                                             const std::vector<uint8_t>& data, uint8_t le) {
-    std::vector<uint8_t> apdu;
-
-    // Header (CLA, INS, P1, P2)
-    apdu.push_back(cla);
-    apdu.push_back(ins);
-    apdu.push_back(p1);
-    apdu.push_back(p2);
-
-    // Se ci sono dati, aggiungi Lc e i dati
-    if (!data.empty()) {
-        if (data.size() > 255) {
-            Logger::error("APDU data too long (max 255 bytes)");
-            return apdu;
-        }
-        apdu.push_back(static_cast<uint8_t>(data.size())); // Lc
-        apdu.insert(apdu.end(), data.begin(), data.end());
-    }
-
-    // Se Le è specificato, aggiungilo
-    if (le > 0 || (data.empty() && le == 0)) {
-        apdu.push_back(le);
-    }
-
-    // Log del comando costruito
-    std::stringstream ss;
-    ss << "Built APDU: ";
-    for (auto byte : apdu) {
-        ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') 
-           << static_cast<int>(byte) << " ";
-    }
-    Logger::debug(ss.str());
-
-    return apdu;
-}
-
-// ---------------------------------------------------------------------------
-// transmitAPDU
-//
-// Wrapper su transmit() che separa i dati di risposta dallo Status Word
-// (SW1 SW2 = ultimi 2 byte). success = true solo se SW == 90 00.
-// ---------------------------------------------------------------------------
-APDUResponse PCSCReader::transmitAPDU(const std::vector<uint8_t>& command)
-{
-    APDUResponse result;
-
-    auto raw = transmit(command);
-
-    // Risposta minima attesa: almeno SW1 + SW2 (2 byte)
-    if (raw.size() < 2)
-    {
-        result.errorMessage = "Response too short (no SW)";
-        return result;
-    }
-
-    uint8_t sw1 = raw[raw.size() - 2];
-    uint8_t sw2 = raw[raw.size() - 1];
-
-    // Estrai i dati (tutto tranne gli ultimi 2 byte)
-    result.data.assign(raw.begin(), raw.end() - 2);
-    result.sw1     = sw1;
-    result.sw2     = sw2;
-    result.success = (sw1 == 0x90 && sw2 == 0x00);
-
-    if (!result.success)
-    {
-        std::stringstream swStr;
-        swStr << "SW: " << std::uppercase << std::hex
-              << std::setw(2) << std::setfill('0') << (int)sw1
-              << std::setw(2) << std::setfill('0') << (int)sw2;
-        result.errorMessage = swStr.str();
-    }
-
-    return result;
 }

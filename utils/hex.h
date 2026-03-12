@@ -1,62 +1,63 @@
+/**
+ * @file hex.h
+ * @brief Utilità per la conversione tra array di byte e rappresentazione esadecimale.
+ */
 #pragma once
-#include <vector>
 #include <string>
+#include <vector>
+#include <array>
+#include <cstdint>
 #include <sstream>
 #include <iomanip>
-#include <stdexcept>
-#include <cctype>
 
+// Forward declaration
+using MifareKey = std::array<uint8_t, 6>;
+
+/**
+ * @brief Funzioni statiche per la conversione esadecimale di byte.
+ */
 class Hex
 {
 public:
-    // ---------------------------------------------------------------------------
-    // bytesToString
-    //
-    // Converte un array di byte in stringa esadecimale uppercase separata da spazi.
-    // Esempio: {0xFF, 0x0A} -> "FF 0A"
-    // ---------------------------------------------------------------------------
-    static std::string bytesToString(const std::vector<uint8_t>& bytes)
-    {
-        std::stringstream ss;
-        ss << std::uppercase << std::hex;
-        for (size_t i = 0; i < bytes.size(); ++i)
-        {
-            if (i > 0) ss << " ";
-            ss << std::setw(2) << std::setfill('0') << (int)bytes[i];
-        }
-        return ss.str();
-    }
+    /**
+     * @brief Converte una stringa esadecimale in un array MifareKey (6 byte).
+     *
+     * La stringa può contenere spazi; deve rappresentare esattamente 6 byte (12 caratteri hex).
+     *
+     * @param hex Stringa esadecimale da convertire (es. "A0A1A2A3A4A5").
+     * @return Array di 6 byte corrispondente alla chiave MIFARE.
+     * @throws std::invalid_argument Se la stringa non è lunga 12 caratteri hex validi.
+     */
+    static MifareKey stringToBytes(const std::string& hex);
 
-    // ---------------------------------------------------------------------------
-    // stringToBytes
-    //
-    // Converte una stringa esadecimale in array di byte.
-    // Accetta formati con o senza spazi: "FF0A" oppure "FF 0A" oppure "FF:0A"
-    // Lancia std::invalid_argument se la stringa contiene caratteri non hex
-    // o ha lunghezza dispari (dopo aver rimosso i separatori).
-    // Esempio: "FF 0A 3B" -> {0xFF, 0x0A, 0x3B}
-    // ---------------------------------------------------------------------------
-    static std::vector<uint8_t> stringToBytes(const std::string& hex)
-    {
-        // Rimuovi spazi e separatori comuni
-        std::string clean;
-        for (char c : hex)
-        {
-            if (c == ' ' || c == ':' || c == '-') continue;
-            if (!std::isxdigit((unsigned char)c))
-                throw std::invalid_argument("Carattere non hex: " + std::string(1, c));
-            clean += (char)std::toupper((unsigned char)c);
-        }
+    /**
+     * @brief Converte un array MifareKey in stringa esadecimale maiuscola.
+     *
+     * @param bytes Array di 6 byte da convertire.
+     * @param withSpaces Se true, inserisce uno spazio tra ogni coppia di byte (default: true).
+     * @return Stringa esadecimale uppercase (es. "A0 A1 A2 A3 A4 A5").
+     */
+    static std::string bytesToString(const MifareKey& bytes, bool withSpaces = true);
 
-        if (clean.size() % 2 != 0)
-            throw std::invalid_argument("Stringa hex di lunghezza dispari");
-
-        std::vector<uint8_t> bytes;
-        bytes.reserve(clean.size() / 2);
-        for (size_t i = 0; i < clean.size(); i += 2)
-            bytes.push_back(static_cast<uint8_t>(std::stoul(clean.substr(i, 2), nullptr, 16)));
-
-        return bytes;
-    }
+    /**
+     * @brief Converte un vettore di byte in stringa esadecimale maiuscola.
+     *
+     * @param bytes Vettore di byte da convertire.
+     * @param withSpaces Se true, inserisce uno spazio tra ogni coppia di byte (default: true).
+     * @return Stringa esadecimale uppercase.
+     */
+    static std::string bytesToString(const std::vector<uint8_t>& bytes, bool withSpaces = true);
 };
 
+/**
+ * @brief Converte un singolo byte in stringa esadecimale uppercase a 2 cifre.
+ *
+ * @param byte Byte da convertire.
+ * @return Stringa di 2 caratteri hex uppercase (es. "0F").
+ */
+inline std::string toHex(uint8_t byte)
+{
+    std::ostringstream ss;
+    ss << std::uppercase << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(byte);
+    return ss.str();
+}

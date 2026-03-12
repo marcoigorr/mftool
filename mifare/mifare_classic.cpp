@@ -1,3 +1,7 @@
+/**
+ * @file mifare_classic.cpp
+ * @brief Implementazione della classe MifareClassic per la gestione di tag MIFARE Classic 1K.
+ */
 #include "mifare_classic.h"
 #include "../utils/logger.h"
 #include "../utils/hex.h"
@@ -5,35 +9,21 @@
 #include <algorithm>
 #include <cctype>
 
-// ---------------------------------------------------------------------------
-// Constructor
-// ---------------------------------------------------------------------------
+
 MifareClassic::MifareClassic(PCSCReader& reader)
     : m_reader(reader)
 {
-    // m_authState è inizializzato con valid=false per tutti i 16 settori
 }
 
-// ---------------------------------------------------------------------------
-// toAbsBlock
-//
-// MIFARE Classic 1K: 16 settori x 4 blocchi = 64 blocchi totali.
-// Esempio: settore 3, blocco relativo 2 → blocco assoluto 14.
-// ---------------------------------------------------------------------------
 int MifareClassic::toAbsBlock(int sector, int relBlock)
 {
-    return sector * 4 + relBlock;
+    return sector * BLOCKS_PER_SECTOR + relBlock;
 }
 
-// ---------------------------------------------------------------------------
-// loadKeys
-//
-// Legge un file .keys (una chiave per riga, 12 hex chars = 6 byte).
-// Ignora righe vuote e commenti (#). Chiavi duplicate vengono incluse.
-// ---------------------------------------------------------------------------
-std::vector<std::vector<uint8_t>> MifareClassic::loadKeys(const std::string& path)
+std::vector<MifareKey> MifareClassic::loadKeys(const std::string& path)
 {
-    std::vector<std::vector<uint8_t>> keys;
+    std::vector<MifareKey> keys;
+    keys.reserve(32);
 
     std::ifstream file(path);
     if (!file.is_open())
@@ -48,19 +38,30 @@ std::vector<std::vector<uint8_t>> MifareClassic::loadKeys(const std::string& pat
         // Rimuovi whitespace
         line.erase(std::remove_if(line.begin(), line.end(), ::isspace), line.end());
         if (line.empty() || line[0] == '#') continue;
-        if (line.size() != 12)              continue;
+        if (line.size() != 12) continue;
 
-        std::vector<uint8_t> key;
+        MifareKey key{};
         bool valid = true;
-        for (size_t i = 0; i < 12; i += 2)
+        
+        for (size_t i = 0; i < 6; ++i)
         {
-            try   { key.push_back(static_cast<uint8_t>(std::stoul(line.substr(i, 2), nullptr, 16))); }
-            catch (...) { valid = false; break; }
+            try 
+            { 
+                key[i] = static_cast<uint8_t>(
+                    std::stoul(line.substr(i * 2, 2), nullptr, 16)
+                );
+            }
+            catch (...) 
+            { 
+                valid = false; 
+                break; 
+            }
         }
 
-        if (valid && key.size() == 6)
+        if (valid)
         {
-            keys.push_back(key);
+            keys.emplace_back(key);  // emplace_back invece di push_back
+            
             Logger::debug("Loaded key from file: " + Hex::bytesToString(key));
         }
     }
@@ -69,127 +70,83 @@ std::vector<std::vector<uint8_t>> MifareClassic::loadKeys(const std::string& pat
     return keys;
 }
 
-// ---------------------------------------------------------------------------
-// authenticate
-//
-// Esegue LOAD KEY + GENERAL AUTHENTICATE e aggiorna m_authState solo
-// in caso di successo. Unico punto di accesso all'APDU di autenticazione.
-// ---------------------------------------------------------------------------
-bool MifareClassic::authenticate(int sector, const std::vector<uint8_t>& key, char keyType)
-{
-    uint8_t keyTypeByte = (keyType == 'B') ? KEY_TYPE_B : KEY_TYPE_A;
+bool MifareClassic::authenticate(int sector, const MifareKey& key, char keyType)
+{        
+    // Step 1: LOAD KEY
+    std::vector<uint8_t> apdu = { 0xFF, 0x82, 0x00, 0x00, 0x06, key[0], key[1], key[2], key[3], key[4], key[5] };
+    auto response = m_reader.transmit(apdu);
 
-    // Step 1: LOAD KEY (FF 82 00 00 06 [key 6B])
-    auto loadResp = m_reader.transmitAPDU(
-        PCSCReader::buildAPDU(0xFF, 0x82, 0x00, 0x00, key)
-    );
-    if (!loadResp.success)
+    if (!response.success)
     {
-        Logger::debug("LOAD KEY failed: " + loadResp.errorMessage);
         return false;
     }
 
-    // Step 2: GENERAL AUTHENTICATE (FF 86 00 00 05 [01 00 block type slot])
-    const int absBlock = toAbsBlock(sector, 0);
-    const std::vector<uint8_t> authData = {
-        0x01, 0x00,
-        static_cast<uint8_t>(absBlock),
-        keyTypeByte,
-        0x00
-    };
+    // Step 2: AUTHENTICATE
+    const uint8_t key_type_byte = (keyType == 'B') ? KEY_TYPE_B : KEY_TYPE_A;
 
-    auto authResp = m_reader.transmitAPDU(
-        PCSCReader::buildAPDU(0xFF, 0x86, 0x00, 0x00, authData)
-    );
+	apdu = { 0xFF, 0x86, 0x00, 0x00, 0x05, 0x01, 0x00, static_cast<uint8_t>(toAbsBlock(sector, 0)), key_type_byte, 0x00 };
+    response = m_reader.transmit(apdu);
 
-    if (authResp.success)
+    if (response.success)
     {
-        auto& a   = m_authState[sector];
-        a.valid   = true;
-        a.keyType = keyType;
-        a.key     = key;
-        if (keyType == 'A') a.keyA = key;
-        else                a.keyB = key;
+        auto& auth_state = m_authState[sector];
+        auth_state.valid = true;
+        auth_state.keyType = keyType;
+        auth_state.key = key;
+        
+        if (keyType == 'A') 
+            auth_state.keyA = key;
+        else                
+            auth_state.keyB = key;
     }
-    return authResp.success;
+    
+    return response.success;
 }
 
-// ---------------------------------------------------------------------------
-// tryAuthenticate
-//
-// Attacco a dizionario su un singolo settore.
-// Strategia: prova tutte le chiavi con KeyA, poi tutte con KeyB.
-// Si ferma al primo successo.
-// ---------------------------------------------------------------------------
-bool MifareClassic::tryAuthenticate(int sector, const std::vector<std::vector<uint8_t>>& keys)
+bool MifareClassic::tryAuthenticate(int sector, const std::vector<MifareKey>& keys)
 {
-    for (char kt : { 'A', 'B' })
+    constexpr std::array<char, 2> key_types = {'A', 'B'};
+    
+    for (const char kt : key_types)
+    {
         for (const auto& key : keys)
+        {
             if (authenticate(sector, key, kt))
                 return true;
+        }
+    }
 
     return false;
 }
 
-// ---------------------------------------------------------------------------
-// reAuth  (private)
-//
-// Riautentica il settore usando le credenziali memorizzate in m_authState.
-// Chiamato automaticamente da readBlock/writeBlock su SW 69 82.
-// ---------------------------------------------------------------------------
 bool MifareClassic::reAuth(int sector)
 {
     const auto& auth = m_authState[sector];
-    if (!auth.valid && auth.keyA.empty() && auth.keyB.empty()) return false;
+    if (!auth.valid && !auth.hasKeyA() && !auth.hasKeyB()) 
+        return false;
 
-    Logger::debug("reAuth S" + std::to_string(sector)
-                  + " Key" + auth.keyType + "...");
+    Logger::debug("Reauthenticating sector " + std::to_string(sector) + " with Key" + auth.keyType + "...");
 
     // 1. Prova il tipo/chiave attivo
-    if (!auth.key.empty() && authenticate(sector, auth.key, auth.keyType))
+    if (authenticate(sector, auth.key, auth.keyType))
         return true;
 
     // 2. Fallback all'altro tipo memorizzato
     if (auth.keyType == 'A' && auth.hasKeyB())
     {
-        Logger::debug("reAuth S" + std::to_string(sector)
-                      + ": KeyA failed, trying stored KeyB");
+        Logger::debug("reAuth S" + std::to_string(sector) + ": KeyA failed, trying stored KeyB");
         return authenticate(sector, auth.keyB, 'B');
     }
+    
     if (auth.keyType == 'B' && auth.hasKeyA())
     {
-        Logger::debug("reAuth S" + std::to_string(sector)
-                      + ": KeyB failed, trying stored KeyA");
+        Logger::debug("reAuth S" + std::to_string(sector) + ": KeyB failed, trying stored KeyA");
         return authenticate(sector, auth.keyA, 'A');
     }
 
     return false;
 }
 
-// ---------------------------------------------------------------------------
-// switchKeyType
-//
-// Commuta la sessione al tipo richiesto usando la chiave gia' scoperta.
-// Utile quando un blocco e' accessibile solo con un tipo specifico.
-// ---------------------------------------------------------------------------
-bool MifareClassic::switchKeyType(int sector, char keyType)
-{
-    const auto& auth = m_authState[sector];
-    const std::vector<uint8_t>& targetKey = (keyType == 'B') ? auth.keyB : auth.keyA;
-
-    if (targetKey.empty())
-    {
-        Logger::debug("switchKeyType S" + std::to_string(sector)
-                      + ": Key" + keyType + " non ancora scoperta");
-        return false;
-    }
-
-    return authenticate(sector, targetKey, keyType);
-}
-
-// ---------------------------------------------------------------------------
-// isAuthenticated / getSectorAuth
-// ---------------------------------------------------------------------------
 bool MifareClassic::isAuthenticated(int sector) const
 {
     return (sector >= 0 && sector < SECTORS) && m_authState[sector].valid;
@@ -197,80 +154,28 @@ bool MifareClassic::isAuthenticated(int sector) const
 
 const SectorAuth& MifareClassic::getSectorAuth(int sector) const
 {
-    static const SectorAuth empty{};
-    if (sector < 0 || sector >= SECTORS) return empty;
+    static const SectorAuth s_empty_auth{};
+    if (sector < 0 || sector >= SECTORS) 
+        return s_empty_auth;
     return m_authState[sector];
 }
 
-// ---------------------------------------------------------------------------
-// readBlock
-//
-// READ BINARY (FF B0 00 [absBlock] 10): legge 16 byte dal blocco.
-// Se SW = 69 82 (security status not satisfied = sessione RF scaduta),
-// esegue una riautenticazione automatica e riprova una volta.
-// ---------------------------------------------------------------------------
+// TODO: aggiungere la possibilitá di leggere usando chiave A o B, parametro -t A|B
 APDUResponse MifareClassic::readBlock(int sector, int relBlock)
 {
-    int absBlock = toAbsBlock(sector, relBlock);
+    const uint8_t abs_block = static_cast<uint8_t>(toAbsBlock(sector, relBlock));
 
-    auto resp = m_reader.transmitAPDU(
-        PCSCReader::buildAPDU(0xFF, 0xB0, 0x00, static_cast<uint8_t>(absBlock), {}, 0x10)
-    );
+    std::vector<uint8_t> apdu = { 0xFF, 0xB0, 0x00, abs_block, 0x10 };
+    auto response = m_reader.transmit(apdu);
 
-    // ACR122U può restituire 69 82 (security status) oppure 63 00 (operation
-    // failed) per un settore la cui sessione RF è scaduta. Gestiamo entrambi.
-    const bool needsReAuth = !resp.success &&
-        ((resp.sw1 == 0x69 && resp.sw2 == 0x82) ||
-         (resp.sw1 == 0x63 && resp.sw2 == 0x00));
+    const bool needs_reauth = !response.success &&
+        ((response.sw1 == 0x69 && response.sw2 == 0x82) ||
+         (response.sw1 == 0x63 && response.sw2 == 0x00));
 
-    if (needsReAuth)
+    if (needs_reauth && reAuth(sector))
     {
-        if (reAuth(sector))
-        {
-            resp = m_reader.transmitAPDU(
-                PCSCReader::buildAPDU(0xFF, 0xB0, 0x00, static_cast<uint8_t>(absBlock), {}, 0x10)
-            );
-        }
+        response = m_reader.transmit(apdu);
     }
 
-    return resp;
-}
-
-// ---------------------------------------------------------------------------
-// writeBlock
-//
-// UPDATE BINARY (FF D6 00 [absBlock] 10 [data 16B]): scrive 16 byte.
-// Rifiuta il blocco S0/B0 (dati produttore, read-only sulla carta).
-// Auto-riautentica su SW 69 82 come readBlock.
-// ---------------------------------------------------------------------------
-APDUResponse MifareClassic::writeBlock(int sector, int relBlock, const std::vector<uint8_t>& data)
-{
-    if (sector == 0 && relBlock == 0)
-    {
-        APDUResponse err;
-        err.errorMessage = "Manufacturer block (S0/B0) is read-only on MIFARE Classic";
-        return err;
-    }
-
-    int absBlock = toAbsBlock(sector, relBlock);
-
-    auto resp = m_reader.transmitAPDU(
-        PCSCReader::buildAPDU(0xFF, 0xD6, 0x00, static_cast<uint8_t>(absBlock), data)
-    );
-
-    const bool needsReAuth = !resp.success &&
-        ((resp.sw1 == 0x69 && resp.sw2 == 0x82) ||
-         (resp.sw1 == 0x63 && resp.sw2 == 0x00));
-
-    if (needsReAuth)
-    {
-        if (reAuth(sector))
-        {
-            resp = m_reader.transmitAPDU(
-                PCSCReader::buildAPDU(0xFF, 0xD6, 0x00, static_cast<uint8_t>(absBlock), data)
-            );
-        }
-    }
-
-    return resp;
+    return response;
 }

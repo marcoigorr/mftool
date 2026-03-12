@@ -1,7 +1,17 @@
+/**
+ * @file pcsc_utils.h
+ * @brief Funzioni di utilità per la gestione degli errori PC/SC (WinSCard API).
+ */
 #pragma once
 #include <winscard.h>
 #include <string>
 
+/**
+ * @brief Converte un codice di errore PC/SC in una stringa leggibile.
+ *
+ * @param status Codice di stato restituito da una funzione WinSCard (LONG).
+ * @return Stringa descrittiva dell'errore corrispondente al codice di stato.
+ */
 inline std::string stringifyError(LONG status) {
     switch (status) {
     case SCARD_S_SUCCESS: return "Success";

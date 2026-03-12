@@ -1,6 +1,8 @@
+/**
+ * @file command_parser.cpp
+ * @brief Implementazione della shell interattiva e dei command handler di mftool.
+ */
 #include "command_parser.h"
-#include "../core/pcsc_reader.h"
-#include "../mifare/mifare_classic.h"
 #include "../utils/logger.h"
 #include "../utils/atr_parser.h"
 #include "../utils/hex.h"
@@ -12,9 +14,7 @@
 #include <cctype>
 #include <ctime>
 
-// ============================================================================
-// SCHEMA COLORI GLOBALE - Solo per dati MIFARE
-// ============================================================================
+
 namespace Color {
     constexpr const char* RESET       = "\033[0m";
     constexpr const char* BOLD        = "\033[1m";
@@ -39,62 +39,26 @@ namespace Color {
 }
 
 CommandParser::CommandParser()  = default;
+
 CommandParser::~CommandParser() = default;
 
-// ---------------------------------------------------------------------------
-// decodeSW
-// ---------------------------------------------------------------------------
-std::string CommandParser::decodeSW(uint8_t sw1, uint8_t sw2)
-{
-    if (sw1 == 0x90 && sw2 == 0x00) return "Success";
-    if (sw1 == 0x61)                return "More bytes available (SW2 = count)";
-
-    // --- MIFARE / ACR122U ---
-    if (sw1 == 0x63 && sw2 == 0x00) return "Authentication failed (wrong key)";
-    if (sw1 == 0x65 && sw2 == 0x81) return "Memory failure (write error)";
-    if (sw1 == 0x69 && sw2 == 0x82) return "Security status not satisfied (sector not authenticated)";
-    if (sw1 == 0x69 && sw2 == 0x86) return "Command not allowed";
-    if (sw1 == 0x6F && sw2 == 0x01) return "Card removed / communication error";
-    if (sw1 == 0x6F && sw2 == 0x04) return "Authentication failed / no suitable key found";
-    if (sw1 == 0x6F && sw2 == 0x12) return "Auth OK but block not readable (access conditions)";
-
-    // --- Standard ISO 7816 ---
-    if (sw1 == 0x67 && sw2 == 0x00) return "Wrong length (Lc/Le incorrect)";
-    if (sw1 == 0x6A && sw2 == 0x81) return "Function not supported";
-    if (sw1 == 0x6A && sw2 == 0x82) return "File/block not found";
-    if (sw1 == 0x6A && sw2 == 0x86) return "Incorrect P1/P2";
-    if (sw1 == 0x6D && sw2 == 0x00) return "INS not supported";
-    if (sw1 == 0x6E && sw2 == 0x00) return "CLA not supported";
-    if (sw1 == 0x6F && sw2 == 0x00) return "Unknown error";
-
-    std::stringstream ss;
-    ss << "SW " << std::uppercase << std::hex
-       << std::setw(2) << std::setfill('0') << (int)sw1
-       << std::setw(2) << std::setfill('0') << (int)sw2;
-    return ss.str();
-}
-
-// ---------------------------------------------------------------------------
-// showHelp
-// ---------------------------------------------------------------------------
 void CommandParser::showHelp() const
 {
     using namespace Color;
     std::cout << "\n" << BOLD << "================ MFTOOL COMMANDS ================" << RESET << "\n";
+    std::cout << "  connect\n";
+	std::cout << "      Tenta la connessione al tag, timeout 5s\n\n";
     std::cout << "  tagid\n";
     std::cout << "      Legge NUID + Manufacturer Data dal blocco 0 (S0/B0)\n";
-    std::cout << "      Autentica automaticamente con Key A (default A0A1A2A3A4A5)\n\n";
+    std::cout << "      Autentica automaticamente con Key A (default 0xA0A1A2A3A4A5)\n\n";
     std::cout << "  scan [-k <keyfile>]\n";
     std::cout << "      Prova tutti i 16 settori con tutte le chiavi (KeyA + KeyB)\n";
     std::cout << "      Default keyfile: keys/found.keys\n\n";
-    std::cout << "  authenticate -s <settore> [-k <keyfile>] [-t A|B] [-key <12 hex>]\n";
+    std::cout << "  authenticate -s <settore> [-k <keyfile>] [-t A|B] [-key <6 byte>]\n";
     std::cout << "      Autentica un settore. Senza -t prova prima KeyA poi KeyB.\n\n";
     std::cout << "  read -s <settore> [-b <blocco>]\n";
     std::cout << "      Senza -b: tabella hex + ASCII + Access di tutti i 4 blocchi\n";
     std::cout << "      Con -b:  decodifica dettagliata del singolo blocco (blocco 0-3)\n\n";
-    std::cout << "  write -s <settore> -b <blocco> -d <32 hex chars>\n";
-    std::cout << "      Scrive 16 byte su un blocco autenticato\n";
-    std::cout << "      Es: write -s 1 -b 0 -d 48656C6C6F000000000000000000000\n\n";
     std::cout << "  dump\n";
     std::cout << "      Legge tutti i 64 blocchi (16 settori) e salva in dumps/<UID>.mfd\n";
     std::cout << "      Formato: MIFARE Dump binario (1024 byte, standard universale)\n";
@@ -108,9 +72,6 @@ void CommandParser::showHelp() const
     std::cout << BOLD << "=================================================" << RESET << "\n\n";
 }
 
-// ---------------------------------------------------------------------------
-// initializeReader
-// ---------------------------------------------------------------------------
 bool CommandParser::initializeReader()
 {
     try
@@ -136,38 +97,101 @@ bool CommandParser::initializeReader()
     }
 }
 
-// ---------------------------------------------------------------------------
-// autoAuth
-// ---------------------------------------------------------------------------
-bool CommandParser::autoAuth(int sector, const std::string& keyFile)
+void CommandParser::cmdAuthenticate(std::istringstream& args)
 {
-    if (m_mifare->isAuthenticated(sector))
-        return true;
+    using namespace Color;
 
-    auto keys = MifareClassic::loadKeys(keyFile);
-    for (const auto& key : keys)
+    int         sector = -1;
+    std::string key_file = "keys/found.keys";
+    char        key_type = '\0';
+    std::string inline_key;
+
+    std::string token;
+    while (args >> token)
     {
-        if (m_mifare->authenticate(sector, key, 'A')) return true;
-        if (m_mifare->authenticate(sector, key, 'B')) return true;
+        if (token == "-s" && args >> token) sector = std::stoi(token);
+        else if (token == "-k" && args >> token) key_file = token;
+        else if (token == "-t" && args >> token) key_type = (char)std::toupper(token[0]);
+        else if (token == "-key" && args >> token) inline_key = token;
     }
-    return false;
+
+    if (sector < 0 || sector > 15)
+    {
+        std::cout << "[!] Uso: authenticate -s <settore 0-15> [-k <keyfile>] [-t A|B] [-key <6 byte>]\n";
+        return;
+    }
+
+    std::vector<MifareKey> keys;
+
+    if (!inline_key.empty())
+    {
+        try
+        {
+            MifareKey key = Hex::stringToBytes(inline_key);
+            keys.emplace_back(key);
+        }
+        catch (const std::invalid_argument& e)
+        {
+            std::cout << "[!] Chiave hex non valida: " << e.what() << "\n";
+            return;
+        }
+    }
+    else
+    {
+        keys = MifareClassic::loadKeys(key_file);
+        if (keys.empty())
+        {
+            std::cout << "[!] Nessuna chiave valida in: " << key_file << "\n";
+            return;
+        }
+    }
+
+    bool ok = false;
+
+    if (key_type == '\0')
+    {
+        ok = m_mifare->tryAuthenticate(sector, keys);
+    }
+    else
+    {
+        for (const auto& key : keys)
+        {
+            if (m_mifare->authenticate(sector, key, key_type))
+            {
+                ok = true;
+                break;
+            }
+        }
+    }
+
+    if (ok)
+    {
+        const auto& auth = m_mifare->getSectorAuth(sector);
+        const char* key_color = (auth.keyType == 'A') ? KEY_A : KEY_B;
+
+        std::cout << "[+] Settore " << sector
+            << " autenticato (" << key_color << "Key" << auth.keyType << RESET << "): "
+            << key_color << Hex::bytesToString(auth.key) << RESET << "\n";
+    }
+    else
+    {
+        std::cout << "[-] Autenticazione fallita per il settore " << sector
+            << " con " << keys.size() << " chiave/i.\n";
+    }
 }
 
-// ---------------------------------------------------------------------------
-// cmdTagID
-// ---------------------------------------------------------------------------
 void CommandParser::cmdTagID()
 {
     using namespace Color;
-    
-    const std::vector<uint8_t> defaultKey = { 0xA0,0xA1,0xA2,0xA3,0xA4,0xA5 };
-    const std::string          keyFile    = "keys/found.keys";
 
-    bool authed = m_mifare->authenticate(0, defaultKey, 'A');
+    const MifareKey default_key = { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 };
+    const std::string key_file = "keys/found.keys";
+
+    bool authed = m_mifare->authenticate(0, default_key, 'A');
 
     if (!authed)
     {
-        auto keys = MifareClassic::loadKeys(keyFile);
+        auto keys = MifareClassic::loadKeys(key_file);
         for (const auto& key : keys)
         {
             if (m_mifare->authenticate(0, key, 'A')) { authed = true; break; }
@@ -178,7 +202,7 @@ void CommandParser::cmdTagID()
     if (!authed)
     {
         std::cout << "[-] Autenticazione settore 0 fallita.\n"
-                  << "    Usare prima: authenticate -s 0 [-k <keyfile>]\n";
+            << "    Usare prima: authenticate -s 0 [-k <keyfile>]\n";
         return;
     }
 
@@ -186,7 +210,7 @@ void CommandParser::cmdTagID()
     if (!resp.success)
     {
         std::cout << "[-] Lettura Manufacturer Block fallita. "
-                  << decodeSW(resp.sw1, resp.sw2) << "\n";
+            << PCSCReader::decodeSW(resp.sw1, resp.sw2) << "\n";
         return;
     }
 
@@ -196,7 +220,7 @@ void CommandParser::cmdTagID()
         std::ostringstream ss;
         ss << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << (int)b;
         return ss.str();
-    };
+        };
 
     std::cout << "[+] Manufacturer Block (S0/B0 - read only)\n";
 
@@ -211,7 +235,7 @@ void CommandParser::cmdTagID()
     std::cout << RESET << "\n";
 
     std::cout << "    " << UID << "NUID    " << RESET << ": " << UID;
-    for (int i = 0; i < 4;  ++i) std::cout << hx(d[i]) << (i < 3  ? " " : "");
+    for (int i = 0; i < 4; ++i) std::cout << hx(d[i]) << (i < 3 ? " " : "");
     std::cout << RESET << "\n";
 
     std::cout << "    " << MFR_DATA << "Mfr Data" << RESET << ": " << MFR_DATA;
@@ -219,96 +243,6 @@ void CommandParser::cmdTagID()
     std::cout << RESET << "\n";
 }
 
-// ---------------------------------------------------------------------------
-// cmdAuthenticate
-// ---------------------------------------------------------------------------
-void CommandParser::cmdAuthenticate(std::istringstream& args)
-{
-    using namespace Color;
-    
-    int         sector  = -1;
-    std::string keyFile = "keys/found.keys";
-    char        keyType = '\0';
-    std::string inlineKey;
-
-    std::string token;
-    while (args >> token)
-    {
-        if      (token == "-s"   && args >> token) sector    = std::stoi(token);
-        else if (token == "-k"   && args >> token) keyFile   = token;
-        else if (token == "-t"   && args >> token) keyType   = (char)std::toupper(token[0]);
-        else if (token == "-key" && args >> token) inlineKey = token;
-    }
-
-    if (sector < 0 || sector > 15)
-    {
-        std::cout << "[!] Uso: authenticate -s <settore 0-15> [-k <keyfile>] [-t A|B] [-key <12 hex>]\n";
-        return;
-    }
-
-    std::vector<std::vector<uint8_t>> keys;
-
-    if (!inlineKey.empty())
-    {
-        try   { keys.push_back(Hex::stringToBytes(inlineKey)); }
-        catch (const std::invalid_argument& e)
-        {
-            std::cout << "[!] Chiave hex non valida: " << e.what() << "\n";
-            return;
-        }
-        if (keys[0].size() != 6)
-        {
-            std::cout << "[!] La chiave deve essere 6 byte (12 hex chars).\n";
-            return;
-        }
-    }
-    else
-    {
-        keys = MifareClassic::loadKeys(keyFile);
-        if (keys.empty())
-        {
-            std::cout << "[!] Nessuna chiave valida in: " << keyFile << "\n";
-            return;
-        }
-    }
-
-    bool ok = false;
-
-    if (keyType == '\0')
-    {
-        ok = m_mifare->tryAuthenticate(sector, keys);
-    }
-    else
-    {
-        for (const auto& key : keys)
-        {
-            if (m_mifare->authenticate(sector, key, keyType))
-            {
-                ok = true;
-                break;
-            }
-        }
-    }
-
-    if (ok)
-    {
-        const auto& auth = m_mifare->getSectorAuth(sector);
-        const char* keyColor = (auth.keyType == 'A') ? KEY_A : KEY_B;
-        
-        std::cout << "[+] Settore " << sector
-                  << " autenticato (" << keyColor << "Key" << auth.keyType << RESET << "): "
-                  << keyColor << Hex::bytesToString(auth.key) << RESET << "\n";
-    }
-    else
-    {
-        std::cout << "[-] Autenticazione fallita per il settore " << sector
-                  << " con " << keys.size() << " chiave/i.\n";
-    }
-}
-
-// ---------------------------------------------------------------------------
-// cmdScan
-// ---------------------------------------------------------------------------
 void CommandParser::cmdScan(std::istringstream& args)
 {
     using namespace Color;
@@ -382,9 +316,8 @@ void CommandParser::cmdScan(std::istringstream& args)
               << KEY_B << crackedB << "/16" << RESET << " KeyB trovate.\n\n";
 }
 
-// ---------------------------------------------------------------------------
-// cmdRead
-// ---------------------------------------------------------------------------
+// TODO: separa la stima di ACs bits in una funzione a parte, utilizzabile anche come comando (cmdCalculateAccessBits e cmdTranslateAccessBits).
+//       Separare anche i vari formati dei blocchi in strutture dedicate.
 void CommandParser::cmdRead(std::istringstream& args)
 {
     using namespace Color;
@@ -405,10 +338,10 @@ void CommandParser::cmdRead(std::istringstream& args)
         return;
     }
 
-    if (!autoAuth(sector))
+	if (!m_mifare->isAuthenticated(sector))
     {
-        std::cout << "[-] Autenticazione settore " << sector << " fallita.\n"
-                  << "    Esegui prima: authenticate -s " << sector << " [-k <keyfile>]\n";
+        std::cout << "[-] Settore " << sector << " non autenticato.\n"
+                  << "    Autentica prima i settori con 'scan' o 'authenticate'.\n";
         return;
     }
 
@@ -418,9 +351,7 @@ void CommandParser::cmdRead(std::istringstream& args)
         return ss.str();
     };
 
-    // =========================================================================
-    // MODALITÀ TABELLA: read -s <sector>
-    // =========================================================================
+    // Modalitá tabella 
     if (relBlock == -1)
     {
         std::vector<APDUResponse> resps(MifareClassic::BLOCKS_PER_SECTOR);
@@ -490,7 +421,7 @@ void CommandParser::cmdRead(std::istringstream& args)
 
             if (!resp.success)
             {
-                std::cout << "lettura fallita: " << decodeSW(resp.sw1, resp.sw2) << "\n";
+                std::cout << "lettura fallita: " << PCSCReader::decodeSW(resp.sw1, resp.sw2) << "\n";
                 continue;
             }
 
@@ -549,13 +480,11 @@ void CommandParser::cmdRead(std::istringstream& args)
         return;
     }
 
-    // =========================================================================
-    // MODALITÀ SINGOLO BLOCCO: read -s <sector> -b <block>
-    // =========================================================================
+	// Modalità dettaglio blocco specifico
     auto resp = m_mifare->readBlock(sector, relBlock);
     if (!resp.success)
     {
-        std::cout << "[-] Lettura fallita. " << decodeSW(resp.sw1, resp.sw2) << "\n";
+        std::cout << "[-] Lettura fallita. " << PCSCReader::decodeSW(resp.sw1, resp.sw2) << "\n";
         return;
     }
 
@@ -714,9 +643,6 @@ void CommandParser::cmdRead(std::istringstream& args)
     }
 }
 
-// ---------------------------------------------------------------------------
-// cmdDumpFile
-// ---------------------------------------------------------------------------
 void CommandParser::cmdDumpFile()
 {
     for (int s = 0; s < MifareClassic::SECTORS; ++s)
@@ -729,10 +655,7 @@ void CommandParser::cmdDumpFile()
     }
 
     using namespace Color;
-    
-    // -------------------------------------------------------------------------
-    // NUID dal Manufacturer Block (S0/B0) -> nome file
-    // -------------------------------------------------------------------------
+
     std::string uidStr;
 
     auto resp = m_mifare->readBlock(0, 0);
@@ -762,9 +685,6 @@ void CommandParser::cmdDumpFile()
 
     const std::string filename = "dumps/dump_" + uidStr + ".mfd";
 
-    // -------------------------------------------------------------------------
-    // Lettura di tutti i 64 blocchi
-    // -------------------------------------------------------------------------
     struct BlockData { bool ok = false; std::vector<uint8_t> data; };
     std::vector<std::vector<BlockData>> mem(
         MifareClassic::SECTORS,
@@ -794,9 +714,6 @@ void CommandParser::cmdDumpFile()
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Scrittura file .mfd (formato binario standard)
-    // -------------------------------------------------------------------------
     std::ofstream out(filename, std::ios::binary);
     if (!out)
     {
@@ -838,10 +755,6 @@ void CommandParser::cmdDumpFile()
               << "  Non letti: " << nFail << "\n\n";
 }
 
-// ---------------------------------------------------------------------------
-// cmdReadDump
-// Legge e visualizza un file dump .mfd
-// ---------------------------------------------------------------------------
 void CommandParser::cmdReadDump(std::istringstream& args)
 {
     using namespace Color;
@@ -890,9 +803,6 @@ void CommandParser::cmdReadDump(std::istringstream& args)
     std::string uidStr;
     for (int i = 0; i < 4; ++i)
         uidStr += hx(data[i]) + (i < 3 ? " " : "");
-
-    std::cout << "\n" << BOLD << "=== DUMP FILE: " << filename << " ===" << RESET << "\n";
-    std::cout << "UID: " << UID << uidStr << RESET << "\n\n";
 
     // Decodifica per ogni settore
     for (int s = 0; s < MifareClassic::SECTORS; ++s)
@@ -1017,171 +927,25 @@ void CommandParser::cmdReadDump(std::istringstream& args)
     }
 }
 
-// ---------------------------------------------------------------------------
-// cmdWrite
-// ---------------------------------------------------------------------------
-void CommandParser::cmdWrite(std::istringstream& args)
-{
-    using namespace Color;
-    
-    int         sector   = -1;
-    int         relBlock = -1;
-    std::string hexData;
-
-    std::string token;
-    while (args >> token)
-    {
-        if      (token == "-s" && args >> token) sector   = std::stoi(token);
-        else if (token == "-b" && args >> token) relBlock = std::stoi(token);
-        else if (token == "-d" && args >> token) hexData  = token;
-    }
-
-    if (sector < 0 || sector > 15 || relBlock < 0 || relBlock > 3 || hexData.empty())
-    {
-        std::cout << "[!] Uso: write -s <settore 0-15> -b <blocco 0-3> -d <32 hex chars>\n";
-        return;
-    }
-
-    if (!autoAuth(sector))
-    {
-        std::cout << "[-] Autenticazione settore " << sector << " fallita.\n"
-                  << "    Esegui prima: authenticate -s " << sector << " [-k <keyfile>]\n";
-        return;
-    }
-
-    if (relBlock == 3)
-    {
-        std::cout << "[!] ATTENZIONE: stai scrivendo sul sector trailer (blocco 3).\n"
-                  << "    Contiene " << KEY_A << "KeyA" << RESET << " + "
-                  << ACCESS_BITS << "Access Bits" << RESET << " + "
-                  << KEY_B << "KeyB" << RESET << ". Una scrittura errata\n"
-                  << "    puo' rendere il settore " << sector << " inaccessibile.\n"
-                  << "    Continua? [s/N] ";
-        std::string confirm;
-        std::getline(std::cin, confirm);
-        if (confirm != "s" && confirm != "S") { std::cout << "Annullato.\n"; return; }
-    }
-
-    std::vector<uint8_t> data;
-    try   { data = Hex::stringToBytes(hexData); }
-    catch (const std::invalid_argument& e)
-    {
-        std::cout << "[!] Dati hex non validi: " << e.what() << "\n";
-        return;
-    }
-
-    if (data.size() != 16)
-    {
-        std::cout << "[!] Devono essere esattamente 16 byte (32 hex chars). "
-                  << "Ricevuti: " << data.size() << " byte.\n";
-        return;
-    }
-
-    auto resp = m_mifare->writeBlock(sector, relBlock, data);
-    if (!resp.success)
-    {
-        std::cout << "[-] Scrittura fallita. " << decodeSW(resp.sw1, resp.sw2) << "\n";
-        if (!resp.errorMessage.empty()) std::cout << "    " << resp.errorMessage << "\n";
-        return;
-    }
-
-    int absBlock = MifareClassic::toAbsBlock(sector, relBlock);
-    std::cout << "[+] S" << sector << "/B" << relBlock
-              << " (assoluto " << absBlock << ") scritto.\n";
-    std::cout << "    HEX: " << Hex::bytesToString(data) << "\n";
-}
-
-// ---------------------------------------------------------------------------
-// run
-// ---------------------------------------------------------------------------
 void CommandParser::run()
 {
     using namespace Color;
-    
-    if (!initializeReader())
-        return;
-
-    std::string selectedReader = m_reader->listReaders()[0];
-    bool shouldExit = false;
-
-    while (!shouldExit)
-    {
-        Logger::info("Waiting for a tag... (press Ctrl+C to exit)");
-
-        if (!m_reader->waitAndConnect(selectedReader))
-            continue;
-
-        // Nuovo tag: crea una nuova istanza di MifareClassic (auth state azzerato)
-        m_mifare = std::make_unique<MifareClassic>(*m_reader);
-
-        // Mostra informazioni sul tag
-        CardInfo info = m_reader->getCardInfo();
-        Logger::info("ATR:  " + Hex::bytesToString(info.atr));
-        Logger::info("TYPE: " + ATRParser::getCardType(info.atr) + "\n");
-        std::cout << "Type 'help' for commands, 'exit' to quit.\n\n";
-
-        // Shell interattiva: attiva finché il tag è presente
-        while (!shouldExit && m_reader->getCardInfo().cardState == "Present")
-        {
-            std::cout << "> ";
-            std::string line;
-            std::getline(std::cin, line);
-
-            if (m_reader->getCardInfo().cardState != "Present")
-                break;
-
-            std::istringstream iss(line);
-            std::string cmd;
-            iss >> cmd;
-
-            if      (cmd == "exit")         { shouldExit = true; }
-            else if (cmd == "help")         { showHelp(); }
-            else if (cmd == "tagid")        { cmdTagID(); }
-            else if (cmd == "scan")         { cmdScan(iss); }
-            else if (cmd == "authenticate") { cmdAuthenticate(iss); }
-            else if (cmd == "read")         { cmdRead(iss); }
-            else if (cmd == "write")        { cmdWrite(iss); }
-            else if (cmd == "dump")         { cmdDumpFile(); }
-            else if (cmd == "readdump")     { cmdReadDump(iss); }
-            else if (!cmd.empty())
-                std::cout << "[!] Comando sconosciuto. Digita 'help'.\n";
-        }
-
-        if (!shouldExit)
-        {
-            Logger::error("Tag removed");
-            m_reader->disconnect();
-        }
-    }
-
-    m_reader->disconnect();
-    m_reader->releaseContext();
-}
-
-// ---------------------------------------------------------------------------
-// run
-// ---------------------------------------------------------------------------
-void CommandParser::run2()
-{
-    using namespace Color;
 
     if (!initializeReader())
         return;
 
     std::string selectedReader = m_reader->listReaders()[0];
-    bool shouldExit = false;
-    bool tagPresent = false;
+    bool should_exit = false;
+    bool tag_present = false;
 
     std::cout << "\n" << BOLD << "========== MFTOOL Interactive Shell ==========" << RESET << "\n";
     std::cout << "Type 'help' for commands, 'exit' to quit.\n";
-    std::cout << "Offline commands: help, readdump, exit\n";
-    std::cout << "Tag required: scan, read, write, dump, tagid, authenticate\n\n";
 
     // Shell interattiva sempre attiva
-    while (!shouldExit)
+    while (!should_exit)
     {
         // Prompt diverso in base alla presenza del tag
-        if (tagPresent)
+        if (tag_present)
             std::cout << BOLD << "[TAG]" << RESET << " > ";
         else
             std::cout << "> ";
@@ -1193,12 +957,10 @@ void CommandParser::run2()
         std::string cmd;
         iss >> cmd;
 
-        // =====================================================================
-        // COMANDI OFFLINE - funzionano sempre
-        // =====================================================================
+		// Comandi globali (non richiedono tag)
         if (cmd == "exit")
         {
-            shouldExit = true;
+            should_exit = true;
             continue;
         }
         else if (cmd == "help")
@@ -1208,13 +970,9 @@ void CommandParser::run2()
         }
         else if (cmd == "readdump")
         {
-            cmdReadDump(iss);
+			cmdReadDump(iss);
             continue;
         }
-
-        // =====================================================================
-        // COMANDO SPECIALE: connect
-        // =====================================================================
         else if (cmd == "connect")
         {
             std::cout << "Waiting for tag...\n";
@@ -1227,24 +985,20 @@ void CommandParser::run2()
                 std::cout << "    ATR:  " << Hex::bytesToString(info.atr) << "\n";
                 std::cout << "    TYPE: " << ATRParser::getCardType(info.atr) << "\n\n";
 
-                tagPresent = true;
+                tag_present = true;
             }
             else
             {
                 std::cout << "[-] No tag detected (timeout)\n";
-                tagPresent = false;
+                tag_present = false;
             }
             continue;
         }
 
-        // =====================================================================
-        // COMANDI CHE RICHIEDONO TAG
-        // =====================================================================
-
-        // Verifica presenza tag prima di eseguire comandi che lo richiedono
-        if (!tagPresent || !m_mifare)
+		// Se il tag non è presente e si é fatto un comando che lo richiede, avvisa
+        if (!tag_present || !m_mifare)
         {
-            if (cmd == "scan" || cmd == "read" || cmd == "write" ||
+            if (cmd == "scan" || cmd == "read" ||
                 cmd == "dump" || cmd == "tagid" || cmd == "authenticate")
             {
                 std::cout << "[!] Nessun tag presente. Usa 'connect' per rilevare un tag.\n";
@@ -1265,16 +1019,15 @@ void CommandParser::run2()
             std::cout << "\n[-] Tag removed\n\n";
             m_reader->disconnect();
             m_mifare.reset();
-            tagPresent = false;
+            tag_present = false;
             continue;
         }
 
-        // Esegui comandi che richiedono il tag
-        if (cmd == "tagid") { cmdTagID(); }
+		// Comandi che richiedono il tag
+        if      (cmd == "tagid") { cmdTagID(); }
         else if (cmd == "scan") { cmdScan(iss); }
         else if (cmd == "authenticate") { cmdAuthenticate(iss); }
         else if (cmd == "read") { cmdRead(iss); }
-        else if (cmd == "write") { cmdWrite(iss); }
         else if (cmd == "dump") { cmdDumpFile(); }
         else if (!cmd.empty())
         {
@@ -1282,7 +1035,7 @@ void CommandParser::run2()
         }
     }
 
-    if (tagPresent)
+    if (tag_present)
     {
         m_reader->disconnect();
     }

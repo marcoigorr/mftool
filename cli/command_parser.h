@@ -1,79 +1,113 @@
+/**
+ * @file command_parser.h
+ * @brief Shell interattiva per i comandi di mftool e gestione del ciclo di vita del tag.
+ */
 #pragma once
-#include <string>
+#include "../core/pcsc_reader.h"
+#include "../mifare/mifare_classic.h"
 #include <memory>
-#include <vector>
+#include <string>
 #include <sstream>
 
-class PCSCReader;
-class MifareClassic;
-
-// ---------------------------------------------------------------------------
-// CommandParser
-//
-// Shell interattiva per operazioni su carte MIFARE Classic 1K via ACR122U.
-// Gestisce il loop principale (attesa tag, comandi, rimozione tag) e
-// delega le operazioni MIFARE alla classe MifareClassic.
-// ---------------------------------------------------------------------------
+/**
+ * @brief Parser dei comandi interattivo per mftool.
+ *
+ * Gestisce l'inizializzazione del lettore, il rilevamento del tag e
+ * l'esecuzione dei comandi MIFARE Classic (scan, read, dump, ecc.).
+ */
 class CommandParser
 {
 public:
+    /**
+     * @brief Costruttore di default.
+     */
     CommandParser();
+
+    /**
+     * @brief Distruttore di default.
+     */
     ~CommandParser();
 
+    /**
+     * @brief Avvia la shell interattiva principale.
+     *
+     * Inizializza il lettore, mostra il prompt e gestisce il loop
+     * di input/comando finché l'utente non digita 'exit'.
+     */
     void run();
-	void run2(); 
 
 private:
     std::unique_ptr<PCSCReader>    m_reader;
     std::unique_ptr<MifareClassic> m_mifare;
 
-    // -------------------------------------------------------------------------
-    // Init / UI
-    // -------------------------------------------------------------------------
+    /**
+     * @brief Inizializza il reader PC/SC e ne verifica la disponibilità.
+     *
+     * @return true se almeno un lettore è stato trovato e il contesto è stato creato.
+     */
     bool initializeReader();
+
+    /**
+     * @brief Stampa la lista dei comandi disponibili su stdout.
+     */
     void showHelp() const;
 
-    // -------------------------------------------------------------------------
-    // Command handlers  (ogni handler riceve il resto della riga come stream)
-    // -------------------------------------------------------------------------
-
-    // read -s <settore 0-15> [-b <blocco 0-3>]
-    //   Senza -b: tabella 4 blocchi con colori + colonna Access.
-    //   Con -b:   decodifica dettagliata del singolo blocco.
-    void cmdRead(std::istringstream& args);
-
-    // dump
-    //   Legge tutti i 64 blocchi e salva in dumps/Dump_<UID>.mfd.
-    void cmdDumpFile();
-
-    void cmdReadDump(std::istringstream& args);  // ← NUOVO
-
-    // write -s <settore 0-15> -b <blocco 0-3> -d <32 hex chars>
-    //   Scrive 16 byte. Auto-autentica tramite stato memorizzato o keyfile.
-    void cmdWrite(std::istringstream& args);
-
-    // tagid
-    //   Legge il Manufacturer Block (S0/B0): NUID + manufacturer data.
-    //   Autentica automaticamente il settore 0 con Key A (default FFFFFFFFFFFF).
+    /**
+     * @brief Legge e mostra il Manufacturer Block (S0/B0) con NUID e dati del produttore.
+     *
+     * Tenta l'autenticazione automatica con la chiave default e con il file chiavi.
+     */
     void cmdTagID();
 
-    // authenticate -s <settore 0-15> [-k <keyfile>] [-t A|B]
-    //   Autentica un singolo settore. Default: found.keys, prova entrambe le chiavi.
-    void cmdAuthenticate(std::istringstream& args);
-
-    // scan [-k <keyfile>]
-    //   Prova tutti i 16 settori con tutte le chiavi del file (KeyA + KeyB).
-    //   Mostra una tabella con le chiavi trovate per settore.
+    /**
+     * @brief Esegue la scansione di tutti i 16 settori con le chiavi del file specificato.
+     *
+     * Prova KeyA e KeyB per ogni settore e stampa una tabella con le chiavi trovate.
+     *
+     * @param args Stream di argomenti; supporta "-k <keyfile>" per specificare il file chiavi.
+     */
     void cmdScan(std::istringstream& args);
 
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
+    /**
+     * @brief Autentica un singolo settore con chiave e tipo specificati da riga di comando.
+     *
+     * @param args Stream di argomenti:
+     *             -s <settore>   Settore target (0-15, obbligatorio).
+     *             -k <keyfile>   File chiavi (default: "keys/found.keys").
+     *             -t A|B         Tipo di chiave da usare.
+     *             -key <12hex>   Chiave inline in formato hex (12 caratteri).
+     */
+    void cmdAuthenticate(std::istringstream& args);
 
-    // Tenta l'autenticazione tramite stato memorizzato (ensureAuthenticated),
-    // con fallback sulle chiavi in keys/found.keys.
-    bool autoAuth(int sector, const std::string& keyFile = "keys/found.keys");
+    /**
+     * @brief Legge e visualizza uno o tutti i blocchi di un settore.
+     *
+     * Senza -b mostra la tabella completa dei 4 blocchi con decodifica Access Bits.
+     * Con -b visualizza il dettaglio di un singolo blocco (tipo, valore, chiavi, ecc.).
+     *
+     * @param args Stream di argomenti:
+     *             -s <settore>  Settore target (0-15, obbligatorio).
+     *             -b <blocco>   Blocco relativo da leggere (0-3, opzionale).
+     */
+    void cmdRead(std::istringstream& args);
 
-    // Decodifica SW1/SW2 in una stringa leggibile (MIFARE + ISO 7816).
-    static std::string decodeSW(uint8_t sw1, uint8_t sw2);
+    /**
+     * @brief Legge tutti i 64 blocchi e salva il dump binario in "dumps/<UID>.mfd".
+     *
+     * Richiede che tutti i 16 settori siano già autenticati (es. dopo uno scan).
+     * Inietta le chiavi note nel sector trailer per produrre un dump completo e reimportabile.
+     */
+    void cmdDumpFile();
+
+    /**
+     * @brief Legge e visualizza un file dump .mfd salvato in precedenza.
+     *
+     * Il file deve trovarsi nella cartella "dumps/" e avere esattamente 1024 byte.
+     * Mostra i blocchi con decodifica colori, Access Bits e Value Blocks.
+     *
+     * @param args Stream di argomenti; il primo token è il nome del file dump
+     *             (es. "dump_3A165647.mfd"). Il prefisso "dumps/" viene aggiunto
+     *             automaticamente se assente.
+     */
+    void cmdReadDump(std::istringstream& args);
 };
