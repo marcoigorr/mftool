@@ -1,4 +1,9 @@
+/**
+ * @file value_block.cpp
+ * @brief Implementazione della costruzione del Value Block MIFARE Classic.
+ */
 #include "value_block.h"
+
 
 std::array<uint8_t, 16> ValueBlock::create(int32_t value, uint8_t address)
 {
