@@ -47,9 +47,9 @@ void CommandParser::showHelp() const
     std::cout << "\n" << BOLD << "================ MFTOOL COMMANDS ================" << RESET << "\n";
     std::cout << "  connect\n";
 	std::cout << "      Tenta la connessione al tag, timeout 5s\n\n";
-    std::cout << "  tagid\n";
-    std::cout << "      Legge UID + Manufacturer Data dal blocco 0 (S0/B0)\n";
-    std::cout << "      Autentica automaticamente con Key A (default 0xA0A1A2A3A4A5)\n\n";
+	std::cout << "  send <APDU hex>\n";
+	std::cout << "      Invia un comando APDU personalizzato al tag\n";
+	std::cout << "      Es: send FF CA 00 00 04 ...\n\n";
     std::cout << "  scan [-k <keyfile>]\n";
     std::cout << "      Prova tutti i 16 settori con tutte le chiavi (KeyA + KeyB)\n";
     std::cout << "      Default keyfile: keys/found.keys\n\n";
@@ -87,6 +87,7 @@ bool CommandParser::initializeReader()
 
         std::cout << "[+] Found " << readers.size() << " reader(s)\n";
         std::cout << "[+] Using reader: " << readers[0] << "\n";
+        
         return true;
     }
     catch (const std::exception& e)
@@ -98,7 +99,40 @@ bool CommandParser::initializeReader()
 
 void CommandParser::cmdSendAPDU(std::istringstream& args)
 {
+    std::string tok;
+    std::vector<uint8_t> apdu;
 
+    try
+    {
+        while (args >> tok)
+            apdu.emplace_back(static_cast<uint8_t>(std::stoul(tok, nullptr, 16)));
+    }
+    catch (const std::exception&)
+    {
+        std::cout << "[!] Token hex non valido: '" << tok << "'\n";
+        std::cout << "    Es: send FF CA 00 00 04\n";
+        return;
+    }
+
+    if (apdu.empty())
+    {
+        std::cout << "[!] Uso: send <APDU hex>\n";
+        return;
+    }
+
+    auto resp = m_reader->transmit(apdu);
+
+    if (!resp.data.empty())
+        std::cout << Hex::bytesToString(resp.data) << " ";
+
+    std::cout << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << (int)resp.sw1
+              << " " << std::setw(2) << std::setfill('0') << (int)resp.sw2;
+
+    const std::string decoded = PCSCReader::decodeSW(resp.sw1, resp.sw2);
+    if (!decoded.empty())
+        std::cout << "  " << decoded;
+
+    std::cout << "\n";
 }
 
 void CommandParser::cmdAuthenticate(std::istringstream& args)
@@ -182,69 +216,6 @@ void CommandParser::cmdAuthenticate(std::istringstream& args)
         std::cout << "[-] Autenticazione fallita per il settore " << sector
             << " con " << keys.size() << " chiave/i.\n";
     }
-}
-
-void CommandParser::cmdTagID()
-{
-    using namespace Color;
-
-    const MifareKey default_key = { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 };
-    const std::string key_file = "keys/found.keys";
-
-    bool authed = m_mifare->authenticate(0, default_key, 'A');
-
-    if (!authed)
-    {
-        auto keys = MifareClassic::loadKeys(key_file);
-        for (const auto& key : keys)
-        {
-            if (m_mifare->authenticate(0, key, 'A')) { authed = true; break; }
-            if (m_mifare->authenticate(0, key, 'B')) { authed = true; break; }
-        }
-    }
-
-    if (!authed)
-    {
-        std::cout << "[-] Autenticazione settore 0 fallita.\n"
-            << "    Usare prima: authenticate -s 0 [-k <keyfile>]\n";
-        return;
-    }
-
-    auto resp = m_mifare->readBlock(0, 0);
-    if (!resp.success)
-    {
-        std::cout << "[-] Lettura Manufacturer Block fallita. "
-            << PCSCReader::decodeSW(resp.sw1, resp.sw2) << "\n";
-        return;
-    }
-
-    const auto& d = resp.data;
-
-    auto hx = [](uint8_t b) {
-        std::ostringstream ss;
-        ss << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << (int)b;
-        return ss.str();
-        };
-
-    std::cout << "[+] Manufacturer Block (S0/B0 - read only)\n";
-
-    std::cout << "    ";
-    for (int i = 0; i < 16; ++i)
-    {
-        if (i == 0) std::cout << UID;
-        if (i == 4) std::cout << RESET << " " << MFR_DATA;
-        std::cout << hx(d[i]);
-        if (i < 15) std::cout << " ";
-    }
-    std::cout << RESET << "\n";
-
-    std::cout << "    " << UID << "UID    " << RESET << ": " << UID;
-    for (int i = 0; i < 4; ++i) std::cout << hx(d[i]) << (i < 3 ? " " : "");
-    std::cout << RESET << "\n";
-
-    std::cout << "    " << MFR_DATA << "Mfr Data" << RESET << ": " << MFR_DATA;
-    for (int i = 4; i < 16; ++i) std::cout << hx(d[i]) << (i < 15 ? " " : "");
-    std::cout << RESET << "\n";
 }
 
 void CommandParser::cmdScan(std::istringstream& args)
@@ -978,15 +949,23 @@ void CommandParser::run()
         else if (cmd == "connect")
         {
             std::cout << "Waiting for tag...\n";
-            if (m_reader->waitAndConnect(selectedReader, 5))  // 5 sec timeout
+            if (m_reader->waitAndConnect(selectedReader, 5))
             {
                 m_mifare = std::make_unique<MifareClassic>(*m_reader);
                 CardInfo info = m_reader->getCardInfo();
 
                 std::cout << "\n[+] TAG DETECTED\n";
                 std::cout << "    ATR:  " << Hex::bytesToString(info.atr) << "\n";
-                std::cout << "    TYPE: " << ATRParser::getCardType(info.atr) << "\n\n";
+                std::cout << "    TYPE: " << ATRParser::getCardType(info.atr) << "\n";
 
+                // UID: GET DATA (FF CA 00 00 04)
+                auto resp = m_reader->transmit({ 0xFF, 0xCA, 0x00, 0x00, 0x04 });
+                if (resp.success && resp.data.size() >= 4)
+                    std::cout << "    UID:  " << Hex::bytesToString(resp.data) << "\n";
+                else
+                    std::cout << "    UID:  (read failed)\n";
+                                            
+                std::cout << "\n";
                 tag_present = true;
             }
             else
@@ -1001,7 +980,7 @@ void CommandParser::run()
         if (!tag_present || !m_mifare)
         {
 			if (cmd == "scan" || cmd == "read" || cmd == "send" ||
-                cmd == "dump" || cmd == "tagid" || cmd == "authenticate")
+                cmd == "dump" || cmd == "authenticate")
             {
                 std::cout << "[!] Nessun tag presente. Usa 'connect' per rilevare un tag.\n";
                 continue;
@@ -1027,7 +1006,6 @@ void CommandParser::run()
 
 		// Comandi che richiedono il tag
 		if      (cmd == "send") { cmdSendAPDU(iss); }
-        else if (cmd == "tagid") { cmdTagID(); }
         else if (cmd == "scan") { cmdScan(iss); }
         else if (cmd == "authenticate") { cmdAuthenticate(iss); }
         else if (cmd == "read") { cmdRead(iss); }

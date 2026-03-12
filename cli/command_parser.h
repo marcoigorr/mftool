@@ -58,13 +58,6 @@ private:
     void showHelp() const;
 
     /**
-     * @brief Legge e mostra il Manufacturer Block (S0/B0) con NUID e dati del produttore.
-     *
-     * Tenta l'autenticazione automatica con la chiave default e con il file chiavi.
-     */
-    void cmdTagID();
-
-    /**
      * @brief Esegue la scansione di tutti i 16 settori con le chiavi del file specificato.
      *
      * Prova KeyA e KeyB per ogni settore e stampa una tabella con le chiavi trovate.
