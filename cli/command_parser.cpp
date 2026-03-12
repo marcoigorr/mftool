@@ -1,6 +1,23 @@
 /**
  * @file command_parser.cpp
  * @brief Implementazione della shell interattiva e dei command handler di mftool.
+ *
+ * Copyright (C) 2026 Marco Petronio
+ *
+ * This file is part of mftool.
+ *
+ * mftool is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * mftool is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with mftool. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "command_parser.h"
 #include "../utils/atr_parser.h"
@@ -46,28 +63,28 @@ void CommandParser::showHelp() const
     using namespace Color;
     std::cout << "\n" << BOLD << "================ MFTOOL COMMANDS ================" << RESET << "\n";
     std::cout << "  connect\n";
-	std::cout << "      Tenta la connessione al tag, timeout 5s\n\n";
-	std::cout << "  send <APDU hex>\n";
-	std::cout << "      Invia un comando APDU personalizzato al tag\n";
-	std::cout << "      Es: send FF CA 00 00 04 ...\n\n";
+    std::cout << "      Attempts tag connection, 5s timeout\n\n";
+    std::cout << "  send <APDU hex>\n";
+    std::cout << "      Sends a custom APDU command to the tag\n";
+    std::cout << "      Ex: send FF CA 00 00 04\n\n";
     std::cout << "  scan [-k <keyfile>]\n";
-    std::cout << "      Prova tutti i 16 settori con tutte le chiavi (KeyA + KeyB)\n";
+    std::cout << "      Tries all 16 sectors with all keys (KeyA + KeyB)\n";
     std::cout << "      Default keyfile: keys/found.keys\n\n";
-    std::cout << "  authenticate -s <settore> [-k <keyfile>] [-t A|B] [-key <6 byte>]\n";
-    std::cout << "      Autentica un settore. Senza -t prova prima KeyA poi KeyB.\n\n";
-    std::cout << "  read -s <settore> [-b <blocco>]\n";
-    std::cout << "      Senza -b: tabella hex + ASCII + Access di tutti i 4 blocchi\n";
-    std::cout << "      Con -b:  decodifica dettagliata del singolo blocco (blocco 0-3)\n\n";
+    std::cout << "  authenticate -s <sector> [-k <keyfile>] [-t A|B] [-key <6 bytes>]\n";
+    std::cout << "      Authenticates a sector. Without -t tries KeyA then KeyB.\n\n";
+    std::cout << "  read -s <sector> [-b <block>]\n";
+    std::cout << "      Without -b: hex + ASCII + Access table for all 4 blocks\n";
+    std::cout << "      With -b: detailed decode of a single block (0-3)\n\n";
     std::cout << "  dump\n";
-    std::cout << "      Legge tutti i 64 blocchi (16 settori) e salva in dumps/<UID>.mfd\n";
-    std::cout << "      Formato: MIFARE Dump binario (1024 byte, standard universale)\n";
-    std::cout << "      Richiede scan preventivo per autenticazione\n\n";
+    std::cout << "      Reads all 64 blocks (16 sectors) and saves to dumps/<UID>.mfd\n";
+    std::cout << "      Format: MIFARE binary dump (1024 bytes, universal standard)\n";
+    std::cout << "      Requires prior scan for authentication\n\n";
     std::cout << "  readdump <filename>\n";
-    std::cout << "      Legge e visualizza un file dump .mfd dalla cartella dumps/\n";
-    std::cout << "      Mostra contenuto con decodifica Access Bits e Value Blocks\n";
-    std::cout << "      Es: readdump dump_3A165647.mfd\n\n";
-    std::cout << "  help    Mostra questo messaggio\n";
-    std::cout << "  exit    Esci dal programma\n";
+    std::cout << "      Reads and displays a .mfd dump file from the dumps/ folder\n";
+    std::cout << "      Shows content with Access Bits and Value Blocks decoding\n";
+    std::cout << "      Ex: readdump dump_3A165647.mfd\n\n";
+    std::cout << "  help    Show this message\n";
+    std::cout << "  exit    Exit the program\n";
     std::cout << BOLD << "=================================================" << RESET << "\n\n";
 }
 
@@ -87,7 +104,7 @@ bool CommandParser::initializeReader()
 
         std::cout << "[+] Found " << readers.size() << " reader(s)\n";
         std::cout << "[+] Using reader: " << readers[0] << "\n";
-        
+
         return true;
     }
     catch (const std::exception& e)
@@ -109,14 +126,14 @@ void CommandParser::cmdSendAPDU(std::istringstream& args)
     }
     catch (const std::exception&)
     {
-        std::cout << "[!] Token hex non valido: '" << tok << "'\n";
-        std::cout << "    Es: send FF CA 00 00 04\n";
+        std::cout << "[!] Invalid hex token: '" << tok << "'\n";
+        std::cout << "    Ex: send FF CA 00 00 04\n";
         return;
     }
 
     if (apdu.empty())
     {
-        std::cout << "[!] Uso: send <APDU hex>\n";
+        std::cout << "[!] Usage: send <APDU hex>\n";
         return;
     }
 
@@ -147,15 +164,24 @@ void CommandParser::cmdAuthenticate(std::istringstream& args)
     std::string token;
     while (args >> token)
     {
-        if (token == "-s" && args >> token) sector = std::stoi(token);
-        else if (token == "-k" && args >> token) key_file = token;
-        else if (token == "-t" && args >> token) key_type = (char)std::toupper(token[0]);
-        else if (token == "-key" && args >> token) inline_key = token;
+        try
+        {
+            if      (token == "-s" && args >> token) sector    = std::stoi(token);
+            else if (token == "-k" && args >> token) key_file  = token;
+            else if (token == "-t" && args >> token) key_type  = (char)std::toupper(token[0]);
+            else if (token == "-key" && args >> token) inline_key = token;
+        }
+        catch (const std::exception&)
+        {
+            std::cout << "[!] Invalid argument: '" << token << "'\n";
+            std::cout << "[!] Usage: authenticate -s <sector 0-15> [-k <keyfile>] [-t A|B] [-key <6 bytes>]\n";
+            return;
+        }
     }
 
     if (sector < 0 || sector > 15)
     {
-        std::cout << "[!] Uso: authenticate -s <settore 0-15> [-k <keyfile>] [-t A|B] [-key <6 byte>]\n";
+        std::cout << "[!] Usage: authenticate -s <sector 0-15> [-k <keyfile>] [-t A|B] [-key <6 bytes>]\n";
         return;
     }
 
@@ -170,7 +196,7 @@ void CommandParser::cmdAuthenticate(std::istringstream& args)
         }
         catch (const std::invalid_argument& e)
         {
-            std::cout << "[!] Chiave hex non valida: " << e.what() << "\n";
+            std::cout << "[!] Invalid hex key: " << e.what() << "\n";
             return;
         }
     }
@@ -179,7 +205,7 @@ void CommandParser::cmdAuthenticate(std::istringstream& args)
         keys = MifareClassic::loadKeys(key_file);
         if (keys.empty())
         {
-            std::cout << "[!] Nessuna chiave valida in: " << key_file << "\n";
+            std::cout << "[!] No valid keys in: " << key_file << "\n";
             return;
         }
     }
@@ -207,14 +233,14 @@ void CommandParser::cmdAuthenticate(std::istringstream& args)
         const auto& auth = m_mifare->getSectorAuth(sector);
         const char* key_color = (auth.keyType == 'A') ? KEY_A : KEY_B;
 
-        std::cout << "[+] Settore " << sector
-            << " autenticato (" << key_color << "Key" << auth.keyType << RESET << "): "
+        std::cout << "[+] Sector " << sector
+            << " authenticated (" << key_color << "Key" << auth.keyType << RESET << "): "
             << key_color << Hex::bytesToString(auth.key) << RESET << "\n";
     }
     else
     {
-        std::cout << "[-] Autenticazione fallita per il settore " << sector
-            << " con " << keys.size() << " chiave/i.\n";
+        std::cout << "[-] Authentication failed for sector " << sector
+            << " with " << keys.size() << " key(s).\n";
     }
 }
 
@@ -230,7 +256,7 @@ void CommandParser::cmdScan(std::istringstream& args)
     auto keys = MifareClassic::loadKeys(keyFile);
     if (keys.empty())
     {
-        std::cout << "[!] Nessuna chiave valida in: " << keyFile << "\n";
+        std::cout << "[!] No valid keys in: " << keyFile << "\n";
         return;
     }
 
@@ -250,7 +276,7 @@ void CommandParser::cmdScan(std::istringstream& args)
                                           + std::string(KEY_W, '-');
 
     std::cout << "\nScanning " << MifareClassic::SECTORS
-              << " settori con " << keys.size() << " chiave/i (KeyA + KeyB)...\n\n";
+              << " sectors with " << keys.size() << " key(s) (KeyA + KeyB)...\n\n";
 
     std::cout << BOLD
               << "  Sec | " << pad("KeyA", KEY_W) << " | KeyB\n"
@@ -271,7 +297,7 @@ void CommandParser::cmdScan(std::istringstream& args)
             if (m_mifare->authenticate(s, key, 'B'))
                 { keyBStr = Hex::bytesToString(key); crackedB++; break; }
 
-        // Ripristina KeyA come auth principale
+        // Ripristina KeyA come autenticazione principale
         if (!keyAStr.empty())
             m_mifare->authenticate(s, m_mifare->getSectorAuth(s).keyA, 'A');
 
@@ -286,9 +312,9 @@ void CommandParser::cmdScan(std::istringstream& args)
     }
 
     std::cout << BOLD << hRule << "\n" << RESET;
-    std::cout << "\n[+] Risultati: "
+    std::cout << "\n[+] Results: "
               << KEY_A << crackedA << "/16" << RESET << " KeyA,  "
-              << KEY_B << crackedB << "/16" << RESET << " KeyB trovate.\n\n";
+              << KEY_B << crackedB << "/16" << RESET << " KeyB found.\n\n";
 }
 
 // TODO: separa la stima di ACs bits in una funzione a parte, utilizzabile anche come comando (cmdCalculateAccessBits e cmdTranslateAccessBits).
@@ -303,19 +329,28 @@ void CommandParser::cmdRead(std::istringstream& args)
     std::string token;
     while (args >> token)
     {
-        if      (token == "-s" && args >> token) sector   = std::stoi(token);
-        else if (token == "-b" && args >> token) relBlock = std::stoi(token);
+        try
+        {
+            if      (token == "-s" && args >> token) sector   = std::stoi(token);
+            else if (token == "-b" && args >> token) relBlock = std::stoi(token);
+        }
+        catch (const std::exception&)
+        {
+            std::cout << "[!] Invalid argument: '" << token << "'\n";
+            std::cout << "[!] Usage: read -s <sector 0-15> [-b <block 0-3>]\n";
+            return;
+        }
     }
 
     if (sector < 0 || sector > 15 || (relBlock != -1 && (relBlock < 0 || relBlock > 3)))
     {
-        std::cout << "[!] Uso: read -s <settore 0-15> [-b <blocco 0-3>]\n";
+        std::cout << "[!] Usage: read -s <sector 0-15> [-b <block 0-3>]\n";
         return;
     }
 
-	if (!m_mifare->isAuthenticated(sector))
+    if (!m_mifare->isAuthenticated(sector))
     {
-        std::cout << "[-] Settore " << sector << " non autenticato. Eseguire prima 'scan' o 'authenticate'.\n";
+        std::cout << "[-] Sector " << sector << " not authenticated. Run 'scan' or 'authenticate' first.\n";
         return;
     }
 
@@ -325,14 +360,14 @@ void CommandParser::cmdRead(std::istringstream& args)
         return ss.str();
     };
 
-    // Modalitá tabella 
+    // Modalità tabella
     if (relBlock == -1)
     {
         std::vector<APDUResponse> resps(MifareClassic::BLOCKS_PER_SECTOR);
         for (int b = 0; b < MifareClassic::BLOCKS_PER_SECTOR; ++b)
             resps[b] = m_mifare->readBlock(sector, b);
 
-        // Decode access bits da sector trailer (B3)
+        // Decodifica access bits dal sector trailer (B3)
         uint8_t accC1[4]  = {}, accC2[4]  = {}, accC3[4]  = {}, accIdx[4] = {};
         bool trailerValid = false;
 
@@ -395,7 +430,7 @@ void CommandParser::cmdRead(std::istringstream& args)
 
             if (!resp.success)
             {
-                std::cout << "lettura fallita: " << PCSCReader::decodeSW(resp.sw1, resp.sw2) << "\n";
+                std::cout << "read failed: " << PCSCReader::decodeSW(resp.sw1, resp.sw2) << "\n";
                 continue;
             }
 
@@ -454,11 +489,11 @@ void CommandParser::cmdRead(std::istringstream& args)
         return;
     }
 
-	// Modalità dettaglio blocco specifico
+    // Modalità dettaglio blocco specifico
     auto resp = m_mifare->readBlock(sector, relBlock);
     if (!resp.success)
     {
-        std::cout << "[-] Lettura fallita. " << PCSCReader::decodeSW(resp.sw1, resp.sw2) << "\n";
+        std::cout << "[-] Read failed. " << PCSCReader::decodeSW(resp.sw1, resp.sw2) << "\n";
         return;
     }
 
@@ -548,7 +583,7 @@ void CommandParser::cmdRead(std::istringstream& args)
 
         if (!valid)
         {
-            std::cout << BOLD << "INVALID - settore potenzialmente bloccato!\n" << RESET;
+            std::cout << BOLD << "INVALID - sector may be locked!\n" << RESET;
         }
         else
         {
@@ -623,7 +658,7 @@ void CommandParser::cmdDumpFile()
     {
         if (!m_mifare->isAuthenticated(s))
         {
-            std::cout << "[-] Settore " << s << "non autenticato. Eseguire prima 'scan'.\n";
+            std::cout << "[-] Sector " << s << " not authenticated. Run 'scan' first.\n";
             return;
         }
     }
@@ -653,7 +688,7 @@ void CommandParser::cmdDumpFile()
     try { fs::create_directories("dumps"); }
     catch (const std::exception& e)
     {
-        std::cout << "[-] Impossibile creare la cartella dumps/: " << e.what() << "\n";
+        std::cout << "[-] Cannot create dumps/ folder: " << e.what() << "\n";
         return;
     }
 
@@ -672,8 +707,8 @@ void CommandParser::cmdDumpFile()
         return ss.str();
     };
 
-    std::cout << "\n" << BOLD << "Dump " << MifareClassic::SECTORS
-              << " settori -> " << filename << RESET << "\n\n";
+    std::cout << "\n" << BOLD << "Dumping " << MifareClassic::SECTORS
+              << " sectors -> " << filename << RESET << "\n\n";
 
     for (int s = 0; s < MifareClassic::SECTORS; ++s)
     {
@@ -691,7 +726,7 @@ void CommandParser::cmdDumpFile()
     std::ofstream out(filename, std::ios::binary);
     if (!out)
     {
-        std::cout << "[-] Impossibile aprire " << filename << " in scrittura\n";
+        std::cout << "[-] Cannot open " << filename << " for writing\n";
         return;
     }
 
@@ -722,10 +757,10 @@ void CommandParser::cmdDumpFile()
         }
     }
 
-    std::cout << "\n[+] Salvato: " << filename << "\n";
-    std::cout << "    Formato: MIFARE Dump (.mfd) - 1024 byte binari\n";
-    std::cout << "    Blocchi letti: " << nOk << "/64"
-              << "  Non letti: " << nFail << "\n\n";
+    std::cout << "\n[+] Saved: " << filename << "\n";
+    std::cout << "    Format: MIFARE dump (.mfd) - 1024 binary bytes\n";
+    std::cout << "    Blocks read: " << nOk << "/64"
+              << "  Unread: " << nFail << "\n\n";
 }
 
 void CommandParser::cmdReadDump(std::istringstream& args)
@@ -735,12 +770,12 @@ void CommandParser::cmdReadDump(std::istringstream& args)
     std::string filename;
     if (!(args >> filename))
     {
-        std::cout << "[!] Uso: readdump <filename>\n";
-        std::cout << "    Es: readdump dump_3A165647.mfd\n";
+        std::cout << "[!] Usage: readdump <filename>\n";
+        std::cout << "    Ex: readdump dump_3A165647.mfd\n";
         return;
     }
 
-    // Prepend "dumps/" se non già presente
+    // Prefisso "dumps/" se non già presente
     std::string fullPath = filename;
     if (filename.find("dumps/") == std::string::npos)
         fullPath = "dumps/" + filename;
@@ -749,7 +784,7 @@ void CommandParser::cmdReadDump(std::istringstream& args)
     std::ifstream file(fullPath, std::ios::binary);
     if (!file)
     {
-        std::cout << "[-] File non trovato: " << fullPath << "\n";
+        std::cout << "[-] File not found: " << fullPath << "\n";
         return;
     }
 
@@ -761,7 +796,7 @@ void CommandParser::cmdReadDump(std::istringstream& args)
 
     if (bytesRead != 1024)
     {
-        std::cout << "[-] File corrotto: attesi 1024 byte, letti " << bytesRead << "\n";
+        std::cout << "[-] Corrupted file: expected 1024 bytes, got " << bytesRead << "\n";
         return;
     }
 
@@ -930,7 +965,7 @@ void CommandParser::run()
         std::string cmd;
         iss >> cmd;
 
-		// Comandi globali (non richiedono tag)
+        // Comandi globali (non richiedono tag)
         if (cmd == "exit")
         {
             should_exit = true;
@@ -943,7 +978,7 @@ void CommandParser::run()
         }
         else if (cmd == "readdump")
         {
-			cmdReadDump(iss);
+            cmdReadDump(iss);
             continue;
         }
         else if (cmd == "connect")
@@ -964,7 +999,7 @@ void CommandParser::run()
                     std::cout << "    UID:  " << Hex::bytesToString(resp.data) << "\n";
                 else
                     std::cout << "    UID:  (read failed)\n";
-                                            
+
                 std::cout << "\n";
                 tag_present = true;
             }
@@ -976,19 +1011,19 @@ void CommandParser::run()
             continue;
         }
 
-		// Se il tag non è presente e si é fatto un comando che lo richiede, avvisa
+        // Se il tag non è presente e si é fatto un comando che lo richiede, avvisa
         if (!tag_present || !m_mifare)
         {
-			if (cmd == "scan" || cmd == "read" || cmd == "send" ||
+            if (cmd == "scan" || cmd == "read" || cmd == "send" ||
                 cmd == "dump" || cmd == "authenticate")
             {
-                std::cout << "[!] Nessun tag presente. Usa 'connect' per rilevare un tag.\n";
+                std::cout << "[!] No tag present. Use 'connect' to detect a tag.\n";
                 continue;
             }
 
             if (!cmd.empty())
             {
-                std::cout << "[!] Comando sconosciuto. Digita 'help'.\n";
+                std::cout << "[!] Unknown command. Type 'help'.\n";
             }
             continue;
         }
@@ -1004,15 +1039,15 @@ void CommandParser::run()
             continue;
         }
 
-		// Comandi che richiedono il tag
-		if      (cmd == "send") { cmdSendAPDU(iss); }
+        // Comandi che richiedono il tag
+        if      (cmd == "send") { cmdSendAPDU(iss); }
         else if (cmd == "scan") { cmdScan(iss); }
         else if (cmd == "authenticate") { cmdAuthenticate(iss); }
         else if (cmd == "read") { cmdRead(iss); }
         else if (cmd == "dump") { cmdDumpFile(); }
         else if (!cmd.empty())
         {
-            std::cout << "[!] Comando sconosciuto. Digita 'help'.\n";
+            std::cout << "[!] Unknown command. Type 'help'.\n";
         }
     }
 

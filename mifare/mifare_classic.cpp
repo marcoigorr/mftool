@@ -1,6 +1,23 @@
 /**
  * @file mifare_classic.cpp
  * @brief Implementazione della classe MifareClassic per la gestione di tag MIFARE Classic 1K.
+ *
+ * Copyright (C) 2026 Marco Petronio
+ *
+ * This file is part of mftool.
+ *
+ * mftool is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * mftool is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with mftool. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "mifare_classic.h"
 #include "../utils/logger.h"
@@ -72,7 +89,7 @@ std::vector<MifareKey> MifareClassic::loadKeys(const std::string& path)
 
 bool MifareClassic::authenticate(int sector, const MifareKey& key, char keyType)
 {        
-    // Step 1: LOAD KEY
+    // Passo 1: carica la chiave nel lettore
     std::vector<uint8_t> apdu = { 0xFF, 0x82, 0x00, 0x00, 0x06, key[0], key[1], key[2], key[3], key[4], key[5] };
     auto response = m_reader.transmit(apdu);
 
@@ -81,10 +98,10 @@ bool MifareClassic::authenticate(int sector, const MifareKey& key, char keyType)
         return false;
     }
 
-    // Step 2: AUTHENTICATE
+    // Passo 2: autentica il blocco target del settore
     const uint8_t key_type_byte = (keyType == 'B') ? KEY_TYPE_B : KEY_TYPE_A;
 
-	apdu = { 0xFF, 0x86, 0x00, 0x00, 0x05, 0x01, 0x00, static_cast<uint8_t>(toAbsBlock(sector, 0)), key_type_byte, 0x00 };
+    apdu = { 0xFF, 0x86, 0x00, 0x00, 0x05, 0x01, 0x00, static_cast<uint8_t>(toAbsBlock(sector, 0)), key_type_byte, 0x00 };
     response = m_reader.transmit(apdu);
 
     if (response.success)

@@ -39,6 +39,7 @@
     <ClInclude Include="utils\pcsc_utils.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include=".github\copilot-instructions.md" />
     <None Include="dumps\dump_510c.mct" />
     <None Include="keys\Dump_3A165647.keys" />
     <None Include="keys\found.keys" />
