@@ -2,30 +2,17 @@
 
 Interactive command-line tool for reading and analyzing **MIFARE Classic 1K** NFC tags via PC/SC readers on Windows.
 
----
-
 ## Features
+It is required to already have valid keys for all of the operations this program offers (except reading a dump file).
 
-- **Interactive shell**
-- **Sectors scanning** — tries KeyA and KeyB across all 16 sectors using a key file
-- **Authentication** — per-sector, with inline key, key file, or automatic fallback
+- **Sector authentication** — tries KeyA and KeyB across all 16 sectors from a key file
 - **Block reading** — table view (all 4 blocks) or detailed single-block view
+  - It recognizes the block format (value, data, sector trailer, manifacturer) and decodes Access Conditions
 - **Dump** — reads all 64 blocks and saves a standard 1024-byte `.mfd` binary file
   - Keys are injected into the Sector Trailer since they are not readable
 - **Read dump** — loads and displays any `.mfd` file without a physical tag
 
----
-
-## Requirements
-
-| Requirement | Details |
-|---|---|
-| OS | Windows 10/11 |
-| Compiler | MSVC 2022+ (C++17) |
-| Hardware | Any PC/SC-compatible NFC reader (tested on ACR122U) |
-| SDK | Windows SDK (WinSCard) — included with Visual Studio |
-
----
+======
 
 ## References
 
