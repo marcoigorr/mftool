@@ -368,3 +368,6 @@ FodyWeavers.xsd
 
 # Dump files - comment if you want to checkin dumps, but they can be very large and contain sensitive information
 /dumps/*
+
+/.github/
+/.github/copilot-instructions.md
