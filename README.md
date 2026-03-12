@@ -12,8 +12,6 @@ It is required to already have valid keys for all of the operations this program
   - Keys are injected into the Sector Trailer since they are not readable
 - **Read dump** — loads and displays any `.mfd` file without a physical tag
 
-======
-
 ## References
 
 - [MIFARE Classic 1K Datasheet — NXP](https://www.nxp.com/docs/en/data-sheet/MF1S50YYX_V1.pdf)
