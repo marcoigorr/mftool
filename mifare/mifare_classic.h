@@ -138,8 +138,8 @@ public:
     APDUResponse readBlock(int sector, int relBlock);
 
 private:
-    PCSCReader& m_reader;                          ///< Reader PC/SC utilizzato per le trasmissioni.
-    std::array<SectorAuth, SECTORS> m_authState;   ///< Stato di autenticazione per ogni settore.
+    PCSCReader& m_reader;            
+    std::array<SectorAuth, SECTORS> m_authState;
 
     /**
      * @brief Ri-autentica un settore usando le chiavi memorizzate nello stato interno.

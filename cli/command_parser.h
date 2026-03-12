@@ -48,6 +48,11 @@ private:
     bool initializeReader();
 
     /**
+	 * @brief Esegue un comando APDU personalizzato specificato dall'utente.
+     */
+    void cmdSendAPDU(std::istringstream& args);
+
+    /**
      * @brief Stampa la lista dei comandi disponibili su stdout.
      */
     void showHelp() const;

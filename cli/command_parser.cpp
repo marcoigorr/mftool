@@ -3,7 +3,6 @@
  * @brief Implementazione della shell interattiva e dei command handler di mftool.
  */
 #include "command_parser.h"
-#include "../utils/logger.h"
 #include "../utils/atr_parser.h"
 #include "../utils/hex.h"
 #include <iostream>
@@ -49,7 +48,7 @@ void CommandParser::showHelp() const
     std::cout << "  connect\n";
 	std::cout << "      Tenta la connessione al tag, timeout 5s\n\n";
     std::cout << "  tagid\n";
-    std::cout << "      Legge NUID + Manufacturer Data dal blocco 0 (S0/B0)\n";
+    std::cout << "      Legge UID + Manufacturer Data dal blocco 0 (S0/B0)\n";
     std::cout << "      Autentica automaticamente con Key A (default 0xA0A1A2A3A4A5)\n\n";
     std::cout << "  scan [-k <keyfile>]\n";
     std::cout << "      Prova tutti i 16 settori con tutte le chiavi (KeyA + KeyB)\n";
@@ -82,19 +81,24 @@ bool CommandParser::initializeReader()
         auto readers = m_reader->listReaders();
         if (readers.empty())
         {
-            Logger::error("No readers found");
+            std::cout << "[-] No readers found.\n";
             return false;
         }
 
-        Logger::info("Found " + std::to_string(readers.size()) + " reader(s)");
-        Logger::info("Using reader: " + readers[0]);
+        std::cout << "[+] Found " << readers.size() << " reader(s)\n";
+        std::cout << "[+] Using reader: " << readers[0] << "\n";
         return true;
     }
     catch (const std::exception& e)
     {
-        Logger::error(std::string("Initialization failed: ") + e.what());
+        std::cout << "[-] Initialization failed: " << e.what() << "\n";
         return false;
     }
+}
+
+void CommandParser::cmdSendAPDU(std::istringstream& args)
+{
+
 }
 
 void CommandParser::cmdAuthenticate(std::istringstream& args)
@@ -234,7 +238,7 @@ void CommandParser::cmdTagID()
     }
     std::cout << RESET << "\n";
 
-    std::cout << "    " << UID << "NUID    " << RESET << ": " << UID;
+    std::cout << "    " << UID << "UID    " << RESET << ": " << UID;
     for (int i = 0; i < 4; ++i) std::cout << hx(d[i]) << (i < 3 ? " " : "");
     std::cout << RESET << "\n";
 
@@ -340,8 +344,7 @@ void CommandParser::cmdRead(std::istringstream& args)
 
 	if (!m_mifare->isAuthenticated(sector))
     {
-        std::cout << "[-] Settore " << sector << " non autenticato.\n"
-                  << "    Autentica prima i settori con 'scan' o 'authenticate'.\n";
+        std::cout << "[-] Settore " << sector << " non autenticato. Eseguire prima 'scan' o 'authenticate'.\n";
         return;
     }
 
@@ -649,7 +652,7 @@ void CommandParser::cmdDumpFile()
     {
         if (!m_mifare->isAuthenticated(s))
         {
-            Logger::error("Non autenticato al settore " + std::to_string(s) + ". Eseguire prima uno scan.");
+            std::cout << "[-] Settore " << s << "non autenticato. Eseguire prima 'scan'.\n";
             return;
         }
     }
@@ -735,7 +738,6 @@ void CommandParser::cmdDumpFile()
                 row = bd.data;
 
             // Iniezione chiavi nel sector trailer (blocco 3)
-            // L'IC maschera Key A nella risposta READ BINARY (hardware by design)
             // Iniettare le chiavi note produce un dump completo e reimportabile
             if (b == 3)
             {
@@ -998,7 +1000,7 @@ void CommandParser::run()
 		// Se il tag non è presente e si é fatto un comando che lo richiede, avvisa
         if (!tag_present || !m_mifare)
         {
-            if (cmd == "scan" || cmd == "read" ||
+			if (cmd == "scan" || cmd == "read" || cmd == "send" ||
                 cmd == "dump" || cmd == "tagid" || cmd == "authenticate")
             {
                 std::cout << "[!] Nessun tag presente. Usa 'connect' per rilevare un tag.\n";
@@ -1024,7 +1026,8 @@ void CommandParser::run()
         }
 
 		// Comandi che richiedono il tag
-        if      (cmd == "tagid") { cmdTagID(); }
+		if      (cmd == "send") { cmdSendAPDU(iss); }
+        else if (cmd == "tagid") { cmdTagID(); }
         else if (cmd == "scan") { cmdScan(iss); }
         else if (cmd == "authenticate") { cmdAuthenticate(iss); }
         else if (cmd == "read") { cmdRead(iss); }
