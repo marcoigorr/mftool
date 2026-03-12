@@ -370,4 +370,4 @@ FodyWeavers.xsd
 /dumps/*
 
 /.github/
-/.github/copilot-instructions.md
+/.github/*
