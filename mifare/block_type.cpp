@@ -38,16 +38,16 @@ BlockType detectBlockType(int sector, int relBlock, const std::vector<uint8_t>& 
     //   byte[13,15] = ~indirizzo
     if (data.size() == 16)
     {
-        bool isValue = true;
-        for (int i = 0; i < 4 && isValue; ++i)
+        bool is_value = true;
+        for (int i = 0; i < 4 && is_value; ++i)
         {
-            if (data[i] != data[i + 8])           isValue = false;
-            if (data[i] != (uint8_t)~data[i + 4]) isValue = false;
+            if (data[i] != data[i + 8])           is_value = false;
+            if (data[i] != (uint8_t)~data[i + 4]) is_value = false;
         }
-        if (data[12] != data[14])            isValue = false;
-        if (data[12] != (uint8_t)~data[13]) isValue = false;
+        if (data[12] != data[14])            is_value = false;
+        if (data[12] != (uint8_t)~data[13]) is_value = false;
 
-        if (isValue) return BlockType::Value;
+        if (is_value) return BlockType::Value;
     }
 
     return BlockType::Data;

@@ -30,13 +30,13 @@ std::string ATRParser::getCardType(const std::vector<uint8_t>& atr)
 
     // ATR standard ACR122U per carte NXP ISO 14443-A = 20 byte
     // Header fisso: 3B 8F 80 01 80 4F 0C A0 00 00 03 06
-    const std::vector<uint8_t> nxpHeader = {
+    const std::vector<uint8_t> nxp_header = {
         0x3B, 0x8F, 0x80, 0x01, 0x80, 0x4F, 0x0C,
         0xA0, 0x00, 0x00, 0x03, 0x06
     };
 
     if (atr.size() == 20 &&
-        std::equal(nxpHeader.begin(), nxpHeader.end(), atr.begin()))
+        std::equal(nxp_header.begin(), nxp_header.end(), atr.begin()))
     {
         // Byte all'indice 14 = tipo carta
         switch (atr[14])

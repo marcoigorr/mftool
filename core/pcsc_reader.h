@@ -154,7 +154,7 @@ private:
 	SCARDHANDLE  m_cardHandle;      ///< Handle alla carta connessa.
 	DWORD        m_activeProtocol;  ///< Protocollo attivo (T=0 o T=1).
 
-	static constexpr DWORD cShareMode          = SCARD_SHARE_EXCLUSIVE;                    ///< Modalità di condivisione.
+	static constexpr DWORD cShareMode          = SCARD_SHARE_EXCLUSIVE;                   ///< Modalità di condivisione.
 	static constexpr DWORD cPreferredProtocols = SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1;   ///< Protocolli accettati.
-	static constexpr DWORD cDispositionAction  = SCARD_LEAVE_CARD;                         ///< Azione alla disconnessione.
+	static constexpr DWORD cDispositionAction  = SCARD_LEAVE_CARD;                        ///< Azione alla disconnessione.
 };

@@ -58,8 +58,8 @@ MifareKey Hex::stringToBytes(const std::string& hex)
     MifareKey result{};
     for (size_t i = 0; i < 6; ++i)
     {
-        std::string byteStr = cleaned.substr(i * 2, 2);
-        result[i] = static_cast<uint8_t>(std::stoul(byteStr, nullptr, 16));
+        std::string byte_str = cleaned.substr(i * 2, 2);
+        result[i] = static_cast<uint8_t>(std::stoul(byte_str, nullptr, 16));
     }
     
     return result;

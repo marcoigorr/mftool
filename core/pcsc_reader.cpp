@@ -193,12 +193,12 @@ CardInfo PCSCReader::getCardInfo()
 {
     CardInfo info;
 
-    constexpr DWORD cMaxAtrSize = 33;
-    constexpr DWORD cMaxReaderNameSize = 256;
+    constexpr DWORD max_atr_size = 33;
+    constexpr DWORD max_reader_name_size = 256;
     
-    BYTE atr[cMaxAtrSize] = {};
+    BYTE atr[max_atr_size] = {};
     DWORD atr_length = sizeof(atr);
-    char reader_name[cMaxReaderNameSize] = {};
+    char reader_name[max_reader_name_size] = {};
     DWORD reader_length = sizeof(reader_name);
     DWORD state = 0;
     DWORD protocol = 0;

@@ -22,4 +22,4 @@
 #include "logger.h"
 
 // Livello di log predefinito all'avvio dell'applicazione.
-Logger::LogLevel Logger::currentLogLevel = Logger::LogLevel::DEBUG;
+Logger::LogLevel Logger::m_currentLogLevel = Logger::LogLevel::DEBUG;

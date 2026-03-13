@@ -61,14 +61,14 @@ public:
      *
      * @param level Livello di soglia; i messaggi con priorità inferiore vengono soppressi.
      */
-    static void setLogLevel(LogLevel level) { currentLogLevel = level; }
+    static void setLogLevel(LogLevel level) { m_currentLogLevel = level; }
 
     /**
      * @brief Restituisce il livello di log attualmente attivo.
      *
      * @return Livello di log corrente.
      */
-    static LogLevel getLogLevel() { return currentLogLevel; }
+    static LogLevel getLogLevel() { return m_currentLogLevel; }
 
     /**
      * @brief Stampa un messaggio di debug su stdout (solo se il livello è DEBUG).
@@ -77,7 +77,7 @@ public:
      */
     static void debug(const std::string& msg)
     {
-        if (currentLogLevel <= LogLevel::DEBUG)
+        if (m_currentLogLevel <= LogLevel::DEBUG)
             std::cout << "[DEBUG] " << msg << "\n";
     }
 
@@ -88,7 +88,7 @@ public:
      */
     static void info(const std::string& msg)
     {
-        if (currentLogLevel <= LogLevel::INFO)
+        if (m_currentLogLevel <= LogLevel::INFO)
             std::cout << "[INFO]  " << msg << "\n";
     }
 
@@ -99,7 +99,7 @@ public:
      */
     static void warning(const std::string& msg)
     {
-        if (currentLogLevel <= LogLevel::WARNING)
+        if (m_currentLogLevel <= LogLevel::WARNING)
             std::cout << "[WARN]  " << msg << "\n";
     }
 
@@ -110,10 +110,10 @@ public:
      */
     static void error(const std::string& msg)
     {
-        if (currentLogLevel <= LogLevel::ERROR)
+        if (m_currentLogLevel <= LogLevel::ERROR)
             std::cerr << "[ERROR] " << msg << "\n";
     }
 
 private:
-    static Logger::LogLevel currentLogLevel; ///< Livello di log corrente (default: DEBUG).
+    static Logger::LogLevel m_currentLogLevel; ///< Livello di log corrente (default: DEBUG).
 };
