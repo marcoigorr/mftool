@@ -39,6 +39,12 @@ inline std::string stringifyError(LONG status) {
     case SCARD_E_TIMEOUT: return "Timeout";
     case SCARD_E_SHARING_VIOLATION: return "Sharing violation";
     case SCARD_E_PROTO_MISMATCH: return "Protocol mismatch";
+    case SCARD_E_NOT_READY: return "Reader not ready";
+    case SCARD_E_NO_SERVICE: return "Smart card service not running";
+    case SCARD_W_UNRESPONSIVE_CARD: return "Card unresponsive (needs reset)";
+    case SCARD_W_UNPOWERED_CARD: return "Card not powered";
+    case SCARD_W_RESET_CARD: return "Card was reset";
+    case SCARD_W_REMOVED_CARD: return "Card removed";
     default: return "Unknown error: " + std::to_string(status);
     }
 }

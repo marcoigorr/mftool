@@ -156,6 +156,7 @@ void PCSCReader::disconnect()
 bool PCSCReader::waitAndConnect(const std::string& readerName, int timeoutSeconds)
 {
     const auto start_time = std::chrono::high_resolution_clock::now();
+    LONG last_status = SCARD_S_SUCCESS;
 
     while (true)
     {
@@ -174,13 +175,59 @@ bool PCSCReader::waitAndConnect(const std::string& readerName, int timeoutSecond
             return true;
         }
 
+        // Carta presente ma non risponde al reset: connessione DIRECT + power-cycle
+        if (status == SCARD_W_UNRESPONSIVE_CARD || status == SCARD_W_UNPOWERED_CARD)
+        {
+            Logger::debug("Card unresponsive, attempting power-cycle reset...");
+
+            LONG direct_status = SCardConnectA(
+                m_context,
+                readerName.c_str(),
+                SCARD_SHARE_DIRECT,
+                0,
+                &m_cardHandle,
+                &m_activeProtocol
+            );
+
+            if (direct_status == SCARD_S_SUCCESS)
+            {
+                LONG reconnect_status = SCardReconnect(
+                    m_cardHandle,
+                    cShareMode,
+                    cPreferredProtocols,
+                    SCARD_RESET_CARD,
+                    &m_activeProtocol
+                );
+
+                if (reconnect_status == SCARD_S_SUCCESS)
+                {
+                    Logger::info("Tag detected (after reset)!");
+                    return true;
+                }
+
+                Logger::debug("Reconnect failed: " + stringifyError(reconnect_status));
+                SCardDisconnect(m_cardHandle, SCARD_LEAVE_CARD);
+                m_cardHandle = 0;
+            }
+            else
+            {
+                Logger::debug("Direct connect failed: " + stringifyError(direct_status));
+            }
+        }
+
+        if (last_status != status)
+        {
+            Logger::debug("SCardConnect: " + stringifyError(status));
+            last_status = status;
+        }
+
         // Verifica timeout
         if (timeoutSeconds > 0)
         {
             auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
             if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() >= timeoutSeconds)
             {
-                Logger::error("Timeout waiting for card");
+                Logger::debug("Timeout waiting for card (last error: " + stringifyError(status) + ")");
                 return false;
             }
         }
