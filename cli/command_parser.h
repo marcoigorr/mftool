@@ -107,6 +107,18 @@ private:
     void cmdRead(std::istringstream& args);
 
     /**
+     * @brief Scrive 16 byte in un blocco di un settore autenticato.
+     *
+     * Per il blocco trailer (B3) richiede conferma esplicita per evitare errori irreversibili.
+     *
+     * @param args Stream di argomenti:
+     *             -s <settore>  Settore target (0-15, obbligatorio).
+     *             -b <blocco>   Blocco relativo da scrivere (0-3, obbligatorio).
+     *             -v <16 bytes> Dati da scrivere in formato hex (32 caratteri, obbligatorio).
+	 */
+    void cmdWrite(std::istringstream& args);
+
+    /**
      * @brief Legge tutti i 64 blocchi e salva il dump binario in "dumps/<UID>.mfd".
      *
      * Richiede che tutti i 16 settori siano già autenticati (es. dopo uno scan).

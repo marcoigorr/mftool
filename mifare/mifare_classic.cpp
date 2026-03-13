@@ -142,7 +142,7 @@ bool MifareClassic::reAuth(int sector)
     if (!auth.valid && !auth.hasKeyA() && !auth.hasKeyB()) 
         return false;
 
-    Logger::debug("Reauthenticating sector " + std::to_string(sector) + " with Key" + auth.keyType + "...");
+    Logger::debug("Reauthenticating sector " + std::to_string(sector) + " with stored Key" + auth.keyType + "...");
 
     // 1. Prova il tipo/chiave attivo
     if (authenticate(sector, auth.key, auth.keyType))
@@ -151,13 +151,13 @@ bool MifareClassic::reAuth(int sector)
     // 2. Fallback all'altro tipo memorizzato
     if (auth.keyType == 'A' && auth.hasKeyB())
     {
-        Logger::debug("reAuth S" + std::to_string(sector) + ": KeyA failed, trying stored KeyB");
+        Logger::debug("Reauthentication failed. Trying stored KeyB");
         return authenticate(sector, auth.keyB, 'B');
     }
     
     if (auth.keyType == 'B' && auth.hasKeyA())
     {
-        Logger::debug("reAuth S" + std::to_string(sector) + ": KeyB failed, trying stored KeyA");
+        Logger::debug("Reauthentication failed. Trying stored KeyA");
         return authenticate(sector, auth.keyA, 'A');
     }
 
@@ -193,6 +193,34 @@ APDUResponse MifareClassic::readBlock(int sector, int relBlock)
     {
         response = m_reader.transmit(apdu);
     }
+
+    return response;
+}
+
+APDUResponse MifareClassic::writeBlock(int sector, int relBlock, const std::vector<uint8_t>& data)
+{
+    if (data.size() != static_cast<size_t>(BLOCK_SIZE))
+    {
+        APDUResponse err;
+        err.errorMessage = "writeBlock: data must be exactly 16 bytes";
+        return err;
+    }
+
+    const uint8_t abs_block = static_cast<uint8_t>(toAbsBlock(sector, relBlock));
+
+    // UPDATE BINARY: FF D6 00 <abs_block> 10 <16 bytes>
+    std::vector<uint8_t> apdu = { 0xFF, 0xD6, 0x00, abs_block, 0x10, 
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], 
+        data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15] };
+
+    auto response = m_reader.transmit(apdu);
+
+    const bool needs_reauth = !response.success &&
+        ((response.sw1 == 0x69 && response.sw2 == 0x82) ||
+         (response.sw1 == 0x63 && response.sw2 == 0x00));
+
+    if (needs_reauth && reAuth(sector))
+        response = m_reader.transmit(apdu);
 
     return response;
 }

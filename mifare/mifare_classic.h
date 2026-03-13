@@ -154,6 +154,19 @@ public:
      */
     APDUResponse readBlock(int sector, int relBlock);
 
+    /**
+     * @brief Scrive 16 byte in un blocco di un settore autenticato.
+     *
+     * Invia UPDATE BINARY (FF D6 00 <abs_block> 10 <16 bytes>).
+     * In caso di errore di autenticazione, tenta ri-autenticazione automatica.
+     *
+     * @param sector   Indice del settore (0-15).
+     * @param relBlock Indice del blocco nel settore (0-3).
+     * @param data     Esattamente 16 byte da scrivere.
+     * @return APDUResponse con success=true se SW = 90 00.
+     */
+    APDUResponse writeBlock(int sector, int relBlock, const std::vector<uint8_t>& data);
+
 private:
     PCSCReader& m_reader;            
     std::array<SectorAuth, SECTORS> m_authState;

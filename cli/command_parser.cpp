@@ -85,6 +85,10 @@ void CommandParser::showHelp() const
     std::cout << "      Reads and displays a .mfd dump file from the dumps/ folder\n";
     std::cout << "      Shows content with Access Bits and Value Blocks decoding\n";
     std::cout << "      Ex: readdump dump_3A165647.mfd\n\n";
+    std::cout << "  write -s <sector> -b <block> -v <32 hex chars>\n";
+    std::cout << "      Writes 16 bytes to a block (requires prior authentication)\n";
+    std::cout << "      B3 (sector trailer) requires explicit confirmation\n";
+    std::cout << "      Ex: write -s 1 -b 0 -v 00112233445566778899AABBCCDDEEFF\n\n";
     std::cout << "  help    Show this message\n";
     std::cout << "  exit    Exit the program\n";
     std::cout << BOLD << "=================================================" << RESET << "\n\n";
@@ -392,14 +396,14 @@ void CommandParser::cmdRead(std::istringstream& args)
                   << " " << keyColor << "Key" << auth.keyType << RESET << ": "
                   << keyColor << Hex::bytesToString(auth.key) << RESET << "\n";
         std::cout << "  Blk  Abs  | 00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F | ASCII            | [C1C2C3] Access\n";
-        std::cout << "  ---------   -----------------------------------------------   ----------------   ----------------\n";
+        std::cout << "  ---------   -----------------------------------------------    ----------------   ----------------\n";
 
         for (int b = 0; b < MifareClassic::BLOCKS_PER_SECTOR; ++b)
         {
             const int   absBlock = MifareClassic::toAbsBlock(sector, b);
             const auto& resp     = resps[b];
 
-            std::cout << "  B" << b << " [" << hx(static_cast<uint8_t>(absBlock)) << "]  | ";
+            std::cout << "  B" << b << "  [" << hx(static_cast<uint8_t>(absBlock)) << "]  | ";
 
             if (!resp.success)
             {
@@ -539,6 +543,129 @@ void CommandParser::cmdRead(std::istringstream& args)
         }
         default: break;
     }
+}
+
+void CommandParser::cmdWrite(std::istringstream& args)
+{
+    using namespace Color;
+
+    // Parsing argomenti
+    int         sector   = -1;
+    int         relBlock = -1;
+    std::string valueHex;
+
+    std::string token;
+    while (args >> token)
+    {
+        try
+        {
+            if      (token == "-s" && args >> token) sector   = std::stoi(token);
+            else if (token == "-b" && args >> token) relBlock = std::stoi(token);
+            else if (token == "-v" && args >> token) valueHex = token;
+        }
+        catch (const std::exception&)
+        {
+            std::cout << "[!] Invalid argument: '" << token << "'\n";
+            std::cout << "[!] Usage: write -s <sector 0-15> -b <block 0-3> -v <32 hex chars>\n";
+            return;
+        }
+    }
+
+    if (sector < 0 || sector > 15 || relBlock < 0 || relBlock > 3 || valueHex.empty())
+    {
+        std::cout << "[!] Usage: write -s <sector 0-15> -b <block 0-3> -v <32 hex chars>\n";
+        std::cout << "    Ex: write -s 1 -b 0 -v 00112233445566778899AABBCCDDEEFF\n";
+        return;
+    }
+
+    // Blocco manufacturer: rifiuto immediato
+    if (sector == 0 && relBlock == 0)
+    {
+        std::cout << "[-] Cannot write Manufacturer Block (S0/B0).\n";
+        return;
+    }
+
+    // Parsing del valore: 32 char hex -> 16 byte
+    std::string cleaned;
+    for (char c : valueHex)
+        if (!std::isspace(static_cast<unsigned char>(c)))
+            cleaned += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+    if (cleaned.size() != 32)
+    {
+        std::cout << "[!] Value must be exactly 16 bytes (32 hex chars), got "
+                  << cleaned.size() / 2 << " byte(s).\n";
+        std::cout << "    Ex: -v 00112233445566778899AABBCCDDEEFF\n";
+        return;
+    }
+    for (char c : cleaned)
+    {
+        if (!std::isxdigit(static_cast<unsigned char>(c)))
+        {
+            std::cout << "[!] Invalid hex character: '" << c << "'\n";
+            return;
+        }
+    }
+
+    std::vector<uint8_t> data(16);
+    for (int i = 0; i < 16; ++i)
+        data[i] = static_cast<uint8_t>(std::stoul(cleaned.substr(i * 2, 2), nullptr, 16));
+
+    if (!m_mifare->isAuthenticated(sector))
+    {
+        std::cout << "[-] Sector " << sector << " not authenticated. Run 'scan' or 'authenticate' first.\n";
+        return;
+    }
+
+    // Sector trailer: validazione access bits + conferma esplicita
+    if (relBlock == 3)
+    {
+        // Verifica che i byte 6-8 del payload siano access bits internamente consistenti.
+        // Access bits inconsistenti scritti su B3 bloccano il settore in modo permanente.
+        const AccessBits ab = AccessBits::decode(data);
+        if (!ab.valid)
+        {
+            std::cout << "[-] REFUSED: Access bits in bytes 6-8 ("
+                      << std::uppercase << std::hex << std::setfill('0')
+                      << std::setw(2) << (int)data[6] << " "
+                      << std::setw(2) << (int)data[7] << " "
+                      << std::setw(2) << (int)data[8] << std::dec
+                      << ") are INVALID (nibble complement check failed).\n";
+            std::cout << "    Writing invalid access bits permanently locks the sector.\n";
+            return;
+        }
+
+        std::cout << "[!] WARNING: Writing Sector Trailer (B3).\n";
+        std::cout << "    AccBits: " << ACCESS_BITS
+                  << std::uppercase << std::hex << std::setfill('0')
+                  << std::setw(2) << (int)data[6] << " "
+                  << std::setw(2) << (int)data[7] << " "
+                  << std::setw(2) << (int)data[8]
+                  << RESET << std::dec << "  (consistent)\n";
+        std::cout << "    Type Y to confirm: ";
+        std::string confirm;
+        std::getline(std::cin, confirm);
+        if (confirm != "Y")
+        {
+            std::cout << "[-] Write cancelled.\n";
+            return;
+        }
+    }
+
+    // Esecuzione
+    const int absBlock = MifareClassic::toAbsBlock(sector, relBlock);
+
+    std::cout << "Writing S" << sector << "/B" << relBlock
+              << "  abs=0x" << std::uppercase << std::hex
+              << std::setw(2) << std::setfill('0') << absBlock
+              << std::dec << "...\n";
+
+    const auto resp = m_mifare->writeBlock(sector, relBlock, data);
+
+    if (resp.success)
+        std::cout << "[+] Write OK  " << Hex::bytesToString(data) << "\n";
+    else
+        std::cout << "[-] Write failed: " << PCSCReader::decodeSW(resp.sw1, resp.sw2) << "\n";
 }
 
 void CommandParser::cmdDumpFile()
@@ -859,7 +986,7 @@ void CommandParser::run()
         if (!tag_present || !m_mifare)
         {
             if (cmd == "scan" || cmd == "read" || cmd == "send" ||
-                cmd == "dump" || cmd == "authenticate")
+                cmd == "dump" || cmd == "write" || cmd == "authenticate")
             {
                 std::cout << "[!] No tag present. Use 'connect' to detect a tag.\n";
                 continue;
@@ -887,8 +1014,9 @@ void CommandParser::run()
         if      (cmd == "send") { cmdSendAPDU(iss); }
         else if (cmd == "scan") { cmdScan(iss); }
         else if (cmd == "authenticate") { cmdAuthenticate(iss); }
-        else if (cmd == "read") { cmdRead(iss); }
-        else if (cmd == "dump") { cmdDumpFile(); }
+        else if (cmd == "read")  { cmdRead(iss); }
+        else if (cmd == "write") { cmdWrite(iss); }
+        else if (cmd == "dump")  { cmdDumpFile(); }
         else if (!cmd.empty())
         {
             std::cout << "[!] Unknown command. Type 'help'.\n";
