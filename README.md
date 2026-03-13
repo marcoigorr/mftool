@@ -19,6 +19,9 @@ Most operations require valid authentication keys. The only exception is `readdu
   - Known keys are injected into each Sector Trailer (not readable from mifare 1k tag)
 - **readdump** — loads and displays any `.mfd` file without a physical tag
 
+# TODOs
+
+Command `clone` - Cloning dump file into current tag's memory using existing write function
 
 ## References
 
