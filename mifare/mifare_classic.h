@@ -167,6 +167,70 @@ public:
      */
     APDUResponse writeBlock(int sector, int relBlock, const std::vector<uint8_t>& data);
 
+    /**
+     * @brief Legge il valore di un Value Block tramite ACR122U Read Value Block (FF B1).
+     *
+     * Restituisce i 4 byte del valore in formato MSB..LSB nel campo data della risposta.
+     *
+     * @param sector   Indice del settore (0-15).
+     * @param relBlock Indice del blocco nel settore (0-2).
+     * @return APDUResponse con data[0..3] = valore (MSB..LSB) se success=true.
+     */
+    APDUResponse readValue(int sector, int relBlock);
+
+    /**
+     * @brief Scrive un valore in un blocco usando ACR122U Value Block Store (FF D7 VB_OP=00).
+     *
+     * Converte il blocco in formato Value Block e memorizza il valore specificato.
+     * L'address byte viene impostato dal reader (tipicamente 0x00).
+     * Per controllare l'address byte, usare writeBlock con ValueBlock::create.
+     *
+     * @param sector   Indice del settore (0-15).
+     * @param relBlock Indice del blocco nel settore (0-2).
+     * @param value    Valore intero con segno (32 bit).
+     * @return APDUResponse con success=true se SW = 90 00.
+     */
+    APDUResponse storeValue(int sector, int relBlock, int32_t value);
+
+    /**
+     * @brief Copia un Value Block usando ACR122U Restore Value Block (5.5.3).
+     *
+     * Usa il comando FF D7 00 <src> 02 03 <dst> per copiare il valore
+     * dal blocco sorgente al blocco destinazione.
+     * Sorgente e destinazione devono essere nello stesso settore (limitazione ACR122U).
+     *
+     * @param srcSector   Settore del blocco sorgente (0-15).
+     * @param srcBlock    Blocco relativo sorgente (0-2).
+     * @param dstSector   Deve essere uguale a srcSector.
+     * @param dstBlock    Blocco relativo destinazione (0-2).
+     * @return APDUResponse con success=true se l'operazione è completata;
+     *         errore immediato se i settori sono diversi.
+     */
+    APDUResponse restoreTransfer(int srcSector, int srcBlock, int dstSector, int dstBlock);
+
+    /**
+     * @brief Cross-sector Value Block transfer seguendo il pattern MifareClassicTool.
+     *
+     * Scrive un value block nello staging, esegue RESTORE (PN532 InDataExchange 0xC2),
+     * ri-autentica il settore destinazione, esegue TRANSFER (PN532 InDataExchange 0xB0),
+     * e ripristina il contenuto originale dello staging block.
+     *
+     * Richiede che entrambi i settori siano già autenticati (tramite scan).
+     * Lo staging block deve avere permessi di scrittura.
+     * Il blocco destinazione deve avere permessi Decrement/Transfer/Restore.
+     *
+     * @param stageSector  Settore dello staging block (0-15).
+     * @param stageBlock   Blocco relativo staging (0-2), con permesso WRITE.
+     * @param destSector   Settore del blocco destinazione (0-15).
+     * @param destBlock    Blocco relativo destinazione (0-2), con permesso Transfer.
+     * @param valueBlock   16 byte del Value Block da trasferire (formato MIFARE ridondante).
+     * @return APDUResponse con success=true se l'intera sequenza è completata.
+     */
+    APDUResponse restoreTransfer(
+        int stageSector, int stageBlock,
+        int destSector, int destBlock,
+        const std::vector<uint8_t>& valueBlock);
+
 private:
     PCSCReader& m_reader;            
     std::array<SectorAuth, SECTORS> m_authState;
@@ -180,6 +244,17 @@ private:
      * @return true se la ri-autenticazione è riuscita.
      */
     bool reAuth(int sector);
+
+    /**
+     * @brief Invia un comando MIFARE raw via PN532 InDataExchange.
+     *
+     * Wrappa il comando in un APDU escape ACR122U: FF 00 00 00 <Lc> D4 40 01 <data>.
+     * Verifica che la risposta PN532 (D5 41 <status>) indichi successo (status=0x00).
+     *
+     * @param mifareCmd Byte del comando MIFARE (es. {0xC2, block} per RESTORE).
+     * @return APDUResponse con success=true se PN532 status == 0x00.
+     */
+    APDUResponse pn532DataExchange(const std::vector<uint8_t>& mifareCmd);
 
     static constexpr uint8_t KEY_TYPE_A = 0x60;
     static constexpr uint8_t KEY_TYPE_B = 0x61;

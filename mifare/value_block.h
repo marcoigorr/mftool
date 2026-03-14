@@ -22,6 +22,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <string>
 
 /**
  * @brief Genera blocchi valore nel formato MIFARE Classic.
@@ -47,4 +48,16 @@ public:
      * @return Array di 16 byte nel formato Value Block MIFARE.
      */
     static std::array<uint8_t, 16> create(int32_t value, uint8_t address);
+
+    /**
+     * @brief Restituisce un riepilogo testuale del Value Block.
+     *
+     * Mostra valore (decimale + hex), address byte (decimale + hex)
+     * e i 16 byte raw in formato hex.
+     *
+     * @param value Valore intero con segno (32 bit).
+     * @param address Indirizzo logico del blocco (1 byte).
+     * @return Stringa multilinea con indentazione.
+     */
+    static std::string summary(int32_t value, uint8_t address);
 };

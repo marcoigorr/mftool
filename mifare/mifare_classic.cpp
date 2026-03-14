@@ -224,3 +224,200 @@ APDUResponse MifareClassic::writeBlock(int sector, int relBlock, const std::vect
 
     return response;
 }
+
+APDUResponse MifareClassic::readValue(int sector, int relBlock)
+{
+    const uint8_t abs_block = static_cast<uint8_t>(toAbsBlock(sector, relBlock));
+
+    // ACR122U 5.5.2 Read Value Block: FF B1 00 <block> 04
+    // Risposta: Value (4 byte MSB..LSB) + SW1 SW2
+    std::vector<uint8_t> apdu = { 0xFF, 0xB1, 0x00, abs_block, 0x04 };
+    auto response = m_reader.transmit(apdu);
+
+    const bool needs_reauth = !response.success &&
+        ((response.sw1 == 0x69 && response.sw2 == 0x82) ||
+         (response.sw1 == 0x63 && response.sw2 == 0x00));
+
+    if (needs_reauth && reAuth(sector))
+        response = m_reader.transmit(apdu);
+
+    return response;
+}
+
+APDUResponse MifareClassic::storeValue(int sector, int relBlock, int32_t value)
+{
+    const uint8_t abs_block = static_cast<uint8_t>(toAbsBlock(sector, relBlock));
+
+    // ACR122U 5.5.1 Value Block Operation: FF D7 00 <block> 05 <VB_OP> <Value MSB..LSB>
+    // VB_OP = 00h: Store - converte il blocco in formato Value Block
+    std::vector<uint8_t> apdu = {
+        0xFF, 0xD7, 0x00, abs_block, 0x05, 0x00,
+        static_cast<uint8_t>((value >> 24) & 0xFF),
+        static_cast<uint8_t>((value >> 16) & 0xFF),
+        static_cast<uint8_t>((value >> 8) & 0xFF),
+        static_cast<uint8_t>(value & 0xFF)
+    };
+
+    auto response = m_reader.transmit(apdu);
+
+    const bool needs_reauth = !response.success &&
+        ((response.sw1 == 0x69 && response.sw2 == 0x82) ||
+         (response.sw1 == 0x63 && response.sw2 == 0x00));
+
+    if (needs_reauth && reAuth(sector))
+        response = m_reader.transmit(apdu);
+
+    return response;
+}
+
+APDUResponse MifareClassic::restoreTransfer(int srcSector, int srcBlock, int dstSector, int dstBlock)
+{
+    // ACR122U 5.5.3: sorgente e destinazione devono essere nello stesso settore
+    if (srcSector != dstSector)
+    {
+        APDUResponse err;
+        err.errorMessage = "Restore Value Block requires same sector (ACR122U 5.5.3). "
+                           "Source S" + std::to_string(srcSector) + " != Dest S" + std::to_string(dstSector);
+        Logger::error(err.errorMessage);
+        return err;
+    }
+
+    const uint8_t src_abs = static_cast<uint8_t>(toAbsBlock(srcSector, srcBlock));
+    const uint8_t dst_abs = static_cast<uint8_t>(toAbsBlock(dstSector, dstBlock));
+
+    Logger::debug("Restore Value Block: abs " + std::to_string(src_abs) + " -> " + std::to_string(dst_abs));
+
+    // ACR122U 5.5.3 Restore Value Block: FF D7 00 <Source Block> 02 03 <Target Block>
+    std::vector<uint8_t> apdu = { 0xFF, 0xD7, 0x00, src_abs, 0x02, 0x03, dst_abs };
+    auto resp = m_reader.transmit(apdu);
+
+    const bool needs_reauth = !resp.success &&
+        ((resp.sw1 == 0x69 && resp.sw2 == 0x82) ||
+         (resp.sw1 == 0x63 && resp.sw2 == 0x00));
+
+    if (needs_reauth && reAuth(srcSector))
+        resp = m_reader.transmit(apdu);
+
+    return resp;
+}
+
+APDUResponse MifareClassic::pn532DataExchange(const std::vector<uint8_t>& mifareCmd)
+{
+    // ACR122U Escape APDU: FF 00 00 00 <Lc> D4 40 01 <mifare cmd bytes>
+    // D4 = TFI host->PN532, 40 = InDataExchange, 01 = target number
+    std::vector<uint8_t> apdu;
+    apdu.reserve(5 + 3 + mifareCmd.size());
+
+    const uint8_t lc = static_cast<uint8_t>(3 + mifareCmd.size());
+    apdu.insert(apdu.end(), { 0xFF, 0x00, 0x00, 0x00, lc, 0xD4, 0x40, 0x01 });
+    apdu.insert(apdu.end(), mifareCmd.begin(), mifareCmd.end());
+
+    auto resp = m_reader.transmit(apdu);
+
+    // Risposta PN532: D5 41 <status> [data]
+    // Status 0x00 = successo
+    APDUResponse result;
+    result.sw1 = resp.sw1;
+    result.sw2 = resp.sw2;
+    result.data = resp.data;
+
+    if (!resp.success || resp.data.size() < 3)
+    {
+        result.success = false;
+        result.errorMessage = "PN532 InDataExchange failed";
+        return result;
+    }
+
+    result.success = (resp.data[2] == 0x00);
+    if (!result.success)
+    {
+        std::vector<uint8_t> status_byte = { resp.data[2] };
+        result.errorMessage = "PN532 status: 0x" + Hex::bytesToString(status_byte);
+    }
+
+    return result;
+}
+
+APDUResponse MifareClassic::restoreTransfer(
+    int stageSector, int stageBlock,
+    int destSector, int destBlock,
+    const std::vector<uint8_t>& valueBlock)
+{
+    const uint8_t stage_abs = static_cast<uint8_t>(toAbsBlock(stageSector, stageBlock));
+    const uint8_t dest_abs   = static_cast<uint8_t>(toAbsBlock(destSector, destBlock));
+
+    Logger::debug("Cross-sector transfer: stage abs " + std::to_string(stage_abs)
+                + " -> dest abs " + std::to_string(dest_abs));
+
+    // Fase 1: Auth staging sector + backup + write
+    if (!reAuth(stageSector))
+    {
+        APDUResponse err;
+        err.errorMessage = "Auth failed for staging sector " + std::to_string(stageSector);
+        Logger::error(err.errorMessage);
+        return err;
+    }
+
+    // Backup contenuto originale dello staging block (come MCT)
+    auto backup_resp = readBlock(stageSector, stageBlock);
+    std::vector<uint8_t> original_data;
+    if (backup_resp.success && backup_resp.data.size() == BLOCK_SIZE)
+        original_data = backup_resp.data;
+
+    // Scrivi il value block preparato nello staging
+    auto write_resp = writeBlock(stageSector, stageBlock, valueBlock);
+    if (!write_resp.success)
+    {
+        write_resp.errorMessage = "Write to staging block failed";
+        Logger::error(write_resp.errorMessage);
+        return write_resp;
+    }
+    Logger::debug("Staging write OK");
+
+    // Fase 2: RESTORE dallo staging (PN532 InDataExchange, MIFARE 0xC2)
+    auto restore_resp = pn532DataExchange({ 0xC2, stage_abs });
+    if (!restore_resp.success)
+    {
+        restore_resp.errorMessage = "RESTORE failed for abs block " + std::to_string(stage_abs);
+        Logger::error(restore_resp.errorMessage);
+        return restore_resp;
+    }
+    Logger::debug("RESTORE OK from abs " + std::to_string(stage_abs));
+
+    // Fase 3: Re-auth settore destinazione
+    if (!reAuth(destSector))
+    {
+        APDUResponse err;
+        err.errorMessage = "Auth failed for destination sector " + std::to_string(destSector);
+        Logger::error(err.errorMessage);
+        return err;
+    }
+
+    // Fase 4: TRANSFER alla destinazione (PN532 InDataExchange, MIFARE 0xB0)
+    auto transfer_resp = pn532DataExchange({ 0xB0, dest_abs });
+    if (!transfer_resp.success)
+    {
+        transfer_resp.errorMessage = "TRANSFER failed for abs block " + std::to_string(dest_abs);
+        Logger::error(transfer_resp.errorMessage);
+        return transfer_resp;
+    }
+    Logger::debug("TRANSFER OK to abs " + std::to_string(dest_abs));
+
+    // Fase 5: Ripristina contenuto originale dello staging block
+    if (!original_data.empty())
+    {
+        if (stageSector != destSector)
+        {
+            if (!reAuth(stageSector))
+                Logger::warning("Cannot re-auth staging sector for restore");
+        }
+
+        auto restore_orig_resp = writeBlock(stageSector, stageBlock, original_data);
+        if (restore_orig_resp.success)
+            Logger::debug("Staging block restored to original content");
+        else
+            Logger::warning("Failed to restore staging block original content");
+    }
+
+    return transfer_resp;
+}

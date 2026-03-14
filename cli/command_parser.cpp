@@ -24,6 +24,7 @@
 #include "../utils/hex.h"
 #include "../mifare/access_bits.h"
 #include "../mifare/block_type.h"
+#include "../mifare/value_block.h"
 #include <iostream>
 #include <sstream>
 #include <fstream>
@@ -89,6 +90,15 @@ void CommandParser::showHelp() const
     std::cout << "      Writes 16 bytes to a block (requires prior authentication)\n";
     std::cout << "      B3 (sector trailer) requires explicit confirmation\n";
     std::cout << "      Ex: write -s 1 -b 0 -v 00112233445566778899AABBCCDDEEFF\n\n";
+    std::cout << "  transfer -s <sector> -b <block> -v <value> -a <addr> -stg <S:B>\n";
+    std::cout << "      Writes a Value Block via Restore+Transfer\n";
+    std::cout << "      -v: signed decimal value (32-bit)\n";
+    std::cout << "      -a: address byte in hex\n";
+    std::cout << "      -stg: staging block (S:B) with write permission\n";
+    std::cout << "            Same sector: ACR122U Restore Value Block (FF D7)\n";
+    std::cout << "            Cross sector: PN532 RESTORE(C2) + TRANSFER(B0)\n";
+    std::cout << "      Ex: transfer -s 3 -b 0 -v 100 -a 0D -stg 3:2\n";
+    std::cout << "      Ex: transfer -s 3 -b 0 -v 100 -a 0D -stg 2:2\n\n";
     std::cout << "  help    Show this message\n";
     std::cout << "  exit    Exit the program\n";
     std::cout << BOLD << "=================================================" << RESET << "\n\n";
@@ -389,21 +399,21 @@ void CommandParser::cmdRead(std::istringstream& args)
         if (resps[3].success && resps[3].data.size() == 16)
             ab = AccessBits::decode(resps[3].data);
 
-        const auto& auth     = m_mifare->getSectorAuth(sector);
-        const char* key_color = (auth.keyType == 'A') ? KEY_A : KEY_B;
+        const auto& auth = m_mifare->getSectorAuth(sector);
 
         std::cout << "\n" << BOLD << "[Sector " << sector << "]" << RESET
-                  << " " << key_color << "Key" << auth.keyType << RESET << ": "
-                  << key_color << Hex::bytesToString(auth.key) << RESET << "\n";
+                  << " " << KEY_A << "KeyA" << RESET << ": "
+                  << KEY_A << Hex::bytesToString(auth.keyA) << KEY_B << "  "
+			      << "KeyB" << RESET << ": " << KEY_B << Hex::bytesToString(auth.keyB) << RESET << "\n";
         std::cout << "  Blk  Abs  | 00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F | ASCII            | [C1C2C3] Access\n";
         std::cout << "  ---------   -----------------------------------------------    ----------------   ----------------\n";
 
         for (int b = 0; b < MifareClassic::BLOCKS_PER_SECTOR; ++b)
         {
-            const int   abs_block = MifareClassic::toAbsBlock(sector, b);
-            const auto& resp     = resps[b];
+            const int abs_block = MifareClassic::toAbsBlock(sector, b);
+            const auto& resp = resps[b];
 
-            std::cout << "  B" << b << "  [" << hx(static_cast<uint8_t>(abs_block)) << "]  | ";
+            std::cout << "  B" << b << "  [" << hx(abs_block) << "]  | ";
 
             if (!resp.success)
             {
@@ -411,7 +421,7 @@ void CommandParser::cmdRead(std::istringstream& args)
                 continue;
             }
 
-            const auto&     block_data    = resp.data;
+            const auto& block_data = resp.data;
             const BlockType type = detectBlockType(sector, b, block_data);
 
             // Hex colorato
@@ -458,9 +468,9 @@ void CommandParser::cmdRead(std::istringstream& args)
         return;
     }
 
-    const auto&     block_data        = resp.data;
-    const int       abs_block = MifareClassic::toAbsBlock(sector, rel_block);
-    const BlockType type     = detectBlockType(sector, rel_block, block_data);
+    const auto& block_data = resp.data;
+    const int abs_block = MifareClassic::toAbsBlock(sector, rel_block);
+    const BlockType type = detectBlockType(sector, rel_block, block_data);
 
     // Intestazione
     std::cout << "[+] S" << sector << "/B" << rel_block
@@ -667,6 +677,238 @@ void CommandParser::cmdWrite(std::istringstream& args)
         std::cout << "[-] Write failed: " << PCSCReader::decodeSW(resp.sw1, resp.sw2) << "\n";
 }
 
+void CommandParser::cmdTransfer(std::istringstream& args)
+{
+    using namespace Color;
+
+    int         sector    = -1;
+    int         rel_block = -1;
+    std::string value_str;
+    std::string addr_str;
+    std::string stg_str;
+
+    std::string token;
+    while (args >> token)
+    {
+        try
+        {
+            if      (token == "-s"   && args >> token) sector    = std::stoi(token);
+            else if (token == "-b"   && args >> token) rel_block = std::stoi(token);
+            else if (token == "-v"   && args >> token) value_str = token;
+            else if (token == "-a"   && args >> token) addr_str  = token;
+            else if (token == "-stg" && args >> token) stg_str   = token;
+        }
+        catch (const std::exception&)
+        {
+            std::cout << "[!] Invalid argument: '" << token << "'\n";
+            std::cout << "[!] Usage: transfer -s <sector> -b <block> -v <value> -a <addr> -stg <S:B>\n";
+            return;
+        }
+    }
+
+    if (sector < 0 || sector > 15 || rel_block < 0 || rel_block > 2 || value_str.empty() || addr_str.empty() || stg_str.empty())
+    {
+        std::cout << "[!] Usage: transfer -s <sector 0-15> -b <block 0-2> -v <value> -a <addr hex> -stg <S:B>\n";
+        std::cout << "    -v: signed decimal value (32-bit)\n";
+        std::cout << "    -a: address byte in hex\n";
+        std::cout << "    -stg: staging block (S:B) with write permission\n";
+        std::cout << "    Ex: transfer -s 3 -b 0 -v 100 -a 0D -stg 3:2\n";
+        return;
+    }
+
+    // Blocco manufacturer: rifiuto immediato
+    if (sector == 0 && rel_block == 0)
+    {
+        std::cout << "[-] Cannot write Manufacturer Block (S0/B0).\n";
+        return;
+    }
+
+    // Parsing del valore decimale (signed 32-bit)
+    int32_t value;
+    try
+    {
+        long long parsed = std::stoll(value_str);
+        if (parsed < INT32_MIN || parsed > INT32_MAX)
+        {
+            std::cout << "[!] Value out of range (signed 32-bit): " << value_str << "\n";
+            return;
+        }
+        value = static_cast<int32_t>(parsed);
+    }
+    catch (const std::exception&)
+    {
+        std::cout << "[!] Invalid decimal value: '" << value_str << "'\n";
+        return;
+    }
+
+    // Parsing dell'indirizzo
+    uint8_t address;
+    try
+    {
+        unsigned long parsed = std::stoul(addr_str, nullptr, 16);
+        if (parsed > 0xFF)
+        {
+            std::cout << "[!] Address must be a single byte (00-FF): " << addr_str << "\n";
+            return;
+        }
+        address = static_cast<uint8_t>(parsed);
+    }
+    catch (const std::exception&)
+    {
+        std::cout << "[!] Invalid hex address: '" << addr_str << "'\n";
+        return;
+    }
+
+    // Formatta il Value Block MIFARE (16 byte ridondanti)
+    const auto vb = ValueBlock::create(value, address);
+    const std::vector<uint8_t> vb_data(vb.begin(), vb.end());
+
+    std::cout << "\n" << BOLD << "[Value Block]" << RESET << "\n"
+              << ValueBlock::summary(value, address) << "\n";
+
+    // Parsing dello staging block (-stg S:B)
+    int stg_sector = -1, stg_block = -1;
+
+    const auto sep = stg_str.find(':');
+    if (sep == std::string::npos)
+    {
+        std::cout << "[!] Invalid -stg format. Use S:B (es. 2:2)\n";
+        return;
+    }
+
+    try
+    {
+        stg_sector = std::stoi(stg_str.substr(0, sep));
+        stg_block  = std::stoi(stg_str.substr(sep + 1));
+    }
+    catch (const std::exception&)
+    {
+        std::cout << "[!] Invalid -stg format: '" << stg_str << "'. Use S:B (es. 2:2)\n";
+        return;
+    }
+
+    if (stg_sector < 0 || stg_sector > 15 || stg_block < 0 || stg_block > 2)
+    {
+        std::cout << "[!] Staging block must be sector 0-15, block 0-2\n";
+        return;
+    }
+    if (stg_sector == sector && stg_block == rel_block)
+    {
+        std::cout << "[!] Staging block cannot be the same as the destination\n";
+        return;
+    }
+    if (stg_sector == 0 && stg_block == 0)
+    {
+        std::cout << "[-] Cannot use Manufacturer Block (S0/B0) as staging.\n";
+        return;
+    }
+
+    if (!m_mifare->isAuthenticated(stg_sector))
+    {
+        std::cout << "[-] Staging sector " << stg_sector << " not authenticated.\n";
+        return;
+    }
+    if (!m_mifare->isAuthenticated(sector))
+    {
+        std::cout << "[-] Destination sector " << sector << " not authenticated.\n";
+        return;
+    }
+
+    const bool same_sector = (stg_sector == sector);
+
+    // Route info
+    std::cout << "\nS" << stg_sector << "/B" << stg_block
+              << " (0x" << std::uppercase << std::hex
+              << std::setw(2) << std::setfill('0')
+              << MifareClassic::toAbsBlock(stg_sector, stg_block)
+              << ") -> S" << std::dec << sector << "/B" << rel_block
+              << " (0x" << std::uppercase << std::hex
+              << std::setw(2) << std::setfill('0')
+              << MifareClassic::toAbsBlock(sector, rel_block)
+              << ")" << std::dec;
+    if (!same_sector)
+        std::cout << "  " << GRAY << "(cross-sector via PN532)" << RESET;
+    std::cout << "\n\n";
+
+    if (same_sector)
+    {
+        // Same sector: ACR122U native Write + Restore Value Block
+        std::cout << "Writing value to staging...\n";
+
+        auto write_resp = m_mifare->writeBlock(stg_sector, stg_block, vb_data);
+        if (!write_resp.success)
+        {
+            std::cout << "[-] Write to staging failed: "
+                      << PCSCReader::decodeSW(write_resp.sw1, write_resp.sw2) << "\n\n";
+            return;
+        }
+        std::cout << "[+] Staging write OK\n";
+
+        std::cout << "Restore+Transfer...\n";
+
+        auto rt_resp = m_mifare->restoreTransfer(stg_sector, stg_block, sector, rel_block);
+        if (!rt_resp.success)
+        {
+            std::cout << "[-] Transfer failed: "
+                      << (rt_resp.errorMessage.empty()
+                          ? PCSCReader::decodeSW(rt_resp.sw1, rt_resp.sw2)
+                          : rt_resp.errorMessage)
+                      << "\n\n";
+            return;
+        }
+        std::cout << "[+] Transfer OK\n";
+    }
+    else
+    {
+        // Cross sector: write -> PN532 restore -> re-auth -> PN532 transfer (pattern MCT)
+        std::cout << "Restore+Transfer...\n";
+
+        auto cs_resp = m_mifare->restoreTransfer(
+            stg_sector, stg_block, sector, rel_block, vb_data);
+
+        if (!cs_resp.success)
+        {
+            std::cout << "[-] Cross-sector transfer failed: "
+                      << (cs_resp.errorMessage.empty()
+                          ? PCSCReader::decodeSW(cs_resp.sw1, cs_resp.sw2)
+                          : cs_resp.errorMessage)
+                      << "\n\n";
+            return;
+        }
+        std::cout << "[+] Transfer OK\n";
+    }
+
+    // Verifica
+    std::cout << "Verifying...\n";
+
+    auto verify_resp = m_mifare->readValue(sector, rel_block);
+    if (verify_resp.success && verify_resp.data.size() == 4)
+    {
+        // ACR122U Read Value Block restituisce 4 byte MSB..LSB
+        const int32_t read_val = static_cast<int32_t>(
+            (verify_resp.data[0] << 24) | (verify_resp.data[1] << 16) |
+            (verify_resp.data[2] << 8)  |  verify_resp.data[3]);
+
+        if (read_val == value)
+        {
+            std::cout << "[+] Verified: value = " << VALUE_BLOCK << std::dec << read_val
+                      << RESET << "\n\n";
+        }
+        else
+        {
+            std::cout << "[!] MISMATCH: expected " << std::dec << value
+                      << ", read " << read_val << "\n\n";
+        }
+    }
+    else
+    {
+        std::cout << "[!] Verify read failed: "
+                  << PCSCReader::decodeSW(verify_resp.sw1, verify_resp.sw2) << "\n";
+        std::cout << "    Transfer may have succeeded - use 'read -s " << sector
+                  << " -b " << rel_block << "' to check manually.\n\n";
+    }
+}
+
 void CommandParser::cmdDumpFile()
 {
     for (int s = 0; s < MifareClassic::SECTORS; ++s)
@@ -839,7 +1081,7 @@ void CommandParser::cmdReadDump(std::istringstream& args)
 
         for (int block = 0; block < MifareClassic::BLOCKS_PER_SECTOR; ++block)
         {
-            const int abs_block    = s * 4 + block;
+            const int abs_block    = MifareClassic::toAbsBlock(s, block);
             const int block_offset = base_offset + (block * 16);
 
             std::cout << "  B" << block << " [" << hx(abs_block) << "]  | ";
@@ -979,7 +1221,7 @@ void CommandParser::run()
         if (!tag_present || !m_mifare)
         {
             if (cmd == "scan" || cmd == "read" || cmd == "send" ||
-                cmd == "dump" || cmd == "write" || cmd == "authenticate")
+                cmd == "dump" || cmd == "write" || cmd == "transfer" || cmd == "authenticate")
             {
                 std::cout << "[!] No tag present. Use 'connect' to detect a tag.\n";
                 continue;
@@ -1008,8 +1250,9 @@ void CommandParser::run()
         else if (cmd == "scan") { cmdScan(iss); }
         else if (cmd == "authenticate") { cmdAuthenticate(iss); }
         else if (cmd == "read")  { cmdRead(iss); }
-        else if (cmd == "write") { cmdWrite(iss); }
-        else if (cmd == "dump")  { cmdDumpFile(); }
+        else if (cmd == "write")  { cmdWrite(iss); }
+        else if (cmd == "transfer") { cmdTransfer(iss); }
+        else if (cmd == "dump")   { cmdDumpFile(); }
         else if (!cmd.empty())
         {
             std::cout << "[!] Unknown command. Type 'help'.\n";

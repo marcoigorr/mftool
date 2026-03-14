@@ -20,6 +20,8 @@
  * along with mftool. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "value_block.h"
+#include <sstream>
+#include <iomanip>
 
 
 std::array<uint8_t, 16> ValueBlock::create(int32_t value, uint8_t address)
@@ -47,4 +49,27 @@ std::array<uint8_t, 16> ValueBlock::create(int32_t value, uint8_t address)
     block[15] = ~address;
 
     return block;
+}
+
+std::string ValueBlock::summary(int32_t value, uint8_t address)
+{
+    const auto raw = create(value, address);
+
+    std::ostringstream ss;
+    ss << "    Value   : " << std::dec << value
+       << "  0x" << std::uppercase << std::hex
+       << std::setw(8) << std::setfill('0') << static_cast<uint32_t>(value) << "\n"
+       << "    Address : " << std::dec << static_cast<int>(address)
+       << "  0x" << std::uppercase << std::hex
+       << std::setw(2) << std::setfill('0') << static_cast<int>(address) << "\n"
+       << "    Raw     : ";
+
+    for (size_t i = 0; i < raw.size(); ++i)
+    {
+        if (i > 0) ss << " ";
+        ss << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
+           << static_cast<int>(raw[i]);
+    }
+
+    return ss.str();
 }

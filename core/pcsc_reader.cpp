@@ -42,7 +42,7 @@ std::string PCSCReader::decodeSW(uint8_t sw1, uint8_t sw2)
     if (sw1 == 0x61)                return "More bytes available (SW2 = count)";
 
     // --- MIFARE / ACR122U ---
-    if (sw1 == 0x63 && sw2 == 0x00) return "Authentication failed (wrong key)";
+    if (sw1 == 0x63 && sw2 == 0x00) return "The operation failed";
     if (sw1 == 0x65 && sw2 == 0x81) return "Memory failure (write error)";
     if (sw1 == 0x69 && sw2 == 0x82) return "Security status not satisfied (sector not authenticated)";
     if (sw1 == 0x69 && sw2 == 0x86) return "Command not allowed";

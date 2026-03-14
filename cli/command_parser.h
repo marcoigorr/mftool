@@ -119,6 +119,22 @@ private:
     void cmdWrite(std::istringstream& args);
 
     /**
+      * @brief Scrive un valore in un Value Block tramite Restore+Transfer.
+      *
+      * Usa un blocco staging con permessi di scrittura per trasferire il valore
+      * al blocco destinazione. Supporta same-sector (ACR122U nativo) e
+      * cross-sector (PN532 InDataExchange).
+      *
+      * @param args Stream di argomenti:
+      *             -s <settore>    Settore destinazione (0-15, obbligatorio).
+      *             -b <blocco>     Blocco relativo destinazione (0-2, obbligatorio).
+      *             -v <valore>     Valore decimale con segno (32-bit, obbligatorio).
+      *             -a <indirizzo>  Address byte in hex (obbligatorio).
+      *             -stg <S:B>     Blocco staging con permessi di scrittura (obbligatorio).
+      */
+    void cmdTransfer(std::istringstream& args);
+
+    /**
      * @brief Legge tutti i 64 blocchi e salva il dump binario in "dumps/<UID>.mfd".
      *
      * Richiede che tutti i 16 settori siano già autenticati (es. dopo uno scan).
