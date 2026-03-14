@@ -1,7 +1,7 @@
 /**
- * @file mftool.cpp
- * @brief Punto di ingresso dell'applicazione mftool.
- *
+ * @file logger.cpp
+ * @brief Definizione della variabile statica del livello di log della classe Logger.
+  *
  * Copyright (C) 2026 Marco Petronio
  *
  * This file is part of mftool.
@@ -19,18 +19,7 @@
  * You should have received a copy of the GNU General Public License
  * along with mftool. If not, see <https://www.gnu.org/licenses/>.
  */
-#include "cli/command_parser.h"
-#include "utils/logger.h"
+#include "logger.h"
 
-
-int main() {
-    try {
-        CommandParser parser;
-        parser.run();
-        return 0;
-    }
-    catch (const std::exception& e) {
-        Logger::error(std::string("Unexpected error: ") + e.what());
-        return 1;
-    }
-}
+// Livello di log predefinito all'avvio dell'applicazione.
+Logger::LogLevel Logger::m_currentLogLevel = Logger::LogLevel::DEBUG;

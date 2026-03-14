@@ -6,6 +6,11 @@
     <ClCompile Include="core\pcsc_reader.cpp" />
     <ClCompile Include="mifare\value_block.cpp" />
     <ClCompile Include="utils\atr_parser.cpp" />
+    <ClCompile Include="utils\logger.cpp" />
+    <ClCompile Include="mifare\mifare_classic.cpp" />
+    <ClCompile Include="utils\hex.cpp" />
+    <ClCompile Include="mifare\access_bits.cpp" />
+    <ClCompile Include="mifare\block_type.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="cli\command_parser.h" />
@@ -13,12 +18,17 @@
     <ClInclude Include="mifare\value_block.h" />
     <ClInclude Include="utils\hex.h" />
     <ClInclude Include="utils\logger.h" />
-    <ClInclude Include="utils\endian.h" />
     <ClInclude Include="utils\pcsc_utils.h" />
     <ClInclude Include="utils\atr_parser.h" />
+    <ClInclude Include="mifare\mifare_classic.h" />
+    <ClInclude Include="mifare\access_bits.h" />
+    <ClInclude Include="mifare\block_type.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="keys\std.keys" />
     <None Include="keys\Dump_3A165647.keys" />
+    <None Include="keys\found.keys" />
+    <None Include="dumps\dump_510c.mct" />
+    <None Include=".github\copilot-instructions.md" />
   </ItemGroup>
 </Project>

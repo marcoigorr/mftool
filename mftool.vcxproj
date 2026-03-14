@@ -22,21 +22,31 @@
     <ClCompile Include="cli\command_parser.cpp" />
     <ClCompile Include="core\pcsc_reader.cpp" />
     <ClCompile Include="mftool.cpp" />
+    <ClCompile Include="mifare\access_bits.cpp" />
+    <ClCompile Include="mifare\block_type.cpp" />
+    <ClCompile Include="mifare\mifare_classic.cpp" />
     <ClCompile Include="mifare\value_block.cpp" />
     <ClCompile Include="utils\atr_parser.cpp" />
+    <ClCompile Include="utils\hex.cpp" />
+    <ClCompile Include="utils\logger.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="cli\command_parser.h" />
     <ClInclude Include="core\pcsc_reader.h" />
+    <ClInclude Include="mifare\access_bits.h" />
+    <ClInclude Include="mifare\block_type.h" />
+    <ClInclude Include="mifare\mifare_classic.h" />
     <ClInclude Include="mifare\value_block.h" />
     <ClInclude Include="utils\atr_parser.h" />
-    <ClInclude Include="utils\endian.h" />
     <ClInclude Include="utils\hex.h" />
     <ClInclude Include="utils\logger.h" />
     <ClInclude Include="utils\pcsc_utils.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include=".github\copilot-instructions.md" />
+    <None Include="dumps\dump_510c.mct" />
     <None Include="keys\Dump_3A165647.keys" />
+    <None Include="keys\found.keys" />
     <None Include="keys\std.keys" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
