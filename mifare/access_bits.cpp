@@ -68,14 +68,14 @@ const char* AccessBits::dataDescShort(uint8_t index)
 const char* AccessBits::trailerDescShort(uint8_t index)
 {
     static const char* table[8] = {
-        "KB-rw: A  acc-r: A  [KB readable]",      // 0: KeyB leggibile!
-        "default  acc-rw: A  KB-rw: A",           // 1: default transport
-        "acc-r: A  KB-r: A",                      // 2: no writes
-        "KA-w: B  acc-r: A|B  acc-w: B  KB-w: B", // 3
-        "KA-w: B  KB-w: B  acc-r: A|B",           // 4
-        "acc-r: A|B  acc-w: B",                   // 5
-        "write-protect  acc-r: A|B",              // 6
-        "locked  acc-r: A|B",                     // 7
+        "KB-rw:A  acc-r:A  [KB readable]",    // 0: KeyB leggibile!
+        "default  acc-rw:A  KB-rw:A",         // 1: default transport
+        "acc-r:A  KB-r:A",                    // 2: no writes
+        "KA-w:B  acc-r:A|B  acc-w:B  KB-w:B", // 3
+        "KA-w:B  KB-w:B  acc-r:A|B",          // 4
+        "acc-r:A|B  acc-w:B",                 // 5
+        "write-protect  acc-r:A|B",           // 6
+        "locked  acc-r:A|B",                  // 7
     };
     return (index < 8) ? table[index] : "?";
 }
@@ -99,14 +99,14 @@ const char* AccessBits::dataDescFull(uint8_t index)
 const char* AccessBits::trailerDescFull(uint8_t index)
 {
     static const char* table[8] = {
-        "KeyB readable  KA-w: A  acc-r: A  KB-rw: A",
-        "default        acc-rw: A  KB-rw: A",
-        "               acc-r: A  KB-r: A",
-        "               KA-w: B  acc-r: A|B  acc-w: B  KB-w: B",
-        "               KA-w: B  KB-w: B  acc-r: A|B",
-        "               acc-r: A|B  acc-w: B",
-        "write-protect  acc-r: A|B",
-        "locked         acc-r: A|B",
+        "KeyB readable  KA-w:A  acc-r:A  KB-rw:A",
+        "default        acc-rw:A  KB-rw:A",
+        "               acc-r:A  KB-r:A",
+        "               KA-w:B  acc-r:A|B  acc-w: B  KB-w:B",
+        "               KA-w:B  KB-w:B  acc-r:A|B",
+        "               acc-r:A|B  acc-w:B",
+        "write-protect  acc-r:A|B",
+        "locked         acc-r:A|B",
     };
     return (index < 8) ? table[index] : "?";
 }

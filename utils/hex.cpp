@@ -67,30 +67,24 @@ MifareKey Hex::stringToBytes(const std::string& hex)
 
 std::string Hex::bytesToString(const MifareKey& bytes, bool withSpaces)
 {
-    std::ostringstream ss;
-    ss << std::uppercase << std::hex << std::setfill('0');
-    
+    std::string result;
     for (size_t i = 0; i < bytes.size(); ++i)
     {
         if (i > 0 && withSpaces)
-            ss << " ";
-        ss << std::setw(2) << static_cast<int>(bytes[i]);
+            result += ' ';
+        result += toHex(bytes[i]);
     }
-    
-    return ss.str();
+    return result;
 }
 
 std::string Hex::bytesToString(const std::vector<uint8_t>& bytes, bool withSpaces)
 {
-    std::ostringstream ss;
-    ss << std::uppercase << std::hex << std::setfill('0');
-    
+    std::string result;
     for (size_t i = 0; i < bytes.size(); ++i)
     {
         if (i > 0 && withSpaces)
-            ss << " ";
-        ss << std::setw(2) << static_cast<int>(bytes[i]);
+            result += ' ';
+        result += toHex(bytes[i]);
     }
-    
-    return ss.str();
+    return result;
 }

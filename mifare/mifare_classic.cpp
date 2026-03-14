@@ -220,7 +220,25 @@ APDUResponse MifareClassic::writeBlock(int sector, int relBlock, const std::vect
          (response.sw1 == 0x63 && response.sw2 == 0x00));
 
     if (needs_reauth && reAuth(sector))
+    {
         response = m_reader.transmit(apdu);
+
+        // Se la scrittura fallisce ancora, prova con l'altro tipo di chiave.
+        // Caso tipico: reAuth riesce con KeyA ma il trailer richiede KeyB per la scrittura.
+        if (!response.success)
+        {
+            const auto& auth = m_authState[sector];
+            const char other_type = (auth.keyType == 'A') ? 'B' : 'A';
+            const auto& other_key = (other_type == 'A') ? auth.keyA : auth.keyB;
+            const bool has_other = (other_type == 'A') ? auth.hasKeyA() : auth.hasKeyB();
+
+            if (has_other && authenticate(sector, other_key, other_type))
+            {
+                Logger::debug("Write retry with Key" + std::string(1, other_type));
+                response = m_reader.transmit(apdu);
+            }
+        }
+    }
 
     return response;
 }

@@ -226,10 +226,7 @@ public:
      * @param valueBlock   16 byte del Value Block da trasferire (formato MIFARE ridondante).
      * @return APDUResponse con success=true se l'intera sequenza è completata.
      */
-    APDUResponse restoreTransfer(
-        int stageSector, int stageBlock,
-        int destSector, int destBlock,
-        const std::vector<uint8_t>& valueBlock);
+    APDUResponse restoreTransfer(int stageSector, int stageBlock, int destSector, int destBlock, const std::vector<uint8_t>& valueBlock);
 
 private:
     PCSCReader& m_reader;            

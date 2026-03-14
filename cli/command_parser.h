@@ -149,8 +149,26 @@ private:
      * Mostra i blocchi con decodifica colori, Access Bits e Value Blocks.
      *
      * @param args Stream di argomenti; il primo token è il nome del file dump
-     *             (es. "dump_3A165647.mfd"). Il prefisso "dumps/" viene aggiunto
-     *             automaticamente se assente.
-     */
-    void cmdReadDump(std::istringstream& args);
+      *             (es. "dump_3A165647.mfd"). Il prefisso "dumps/" viene aggiunto
+      *             automaticamente se assente.
+      */
+     void cmdReadDump(std::istringstream& args);
+
+    /**
+      * @brief Scrive il contenuto di un file dump (.mfd/.mct) sul tag presente.
+      *
+      * Carica il dump, verifica che tutti i settori siano autenticati, legge
+      * tutti i blocchi dal tag per confronto e scrive solo quelli diversi.
+      *
+      * Strategia per blocco:
+      *   - S0/B0 (Manufacturer): skip (read-only hardware).
+      *   - B0-B2 (Data): confronto → SAME se identici, altrimenti writeBlock.
+      *     Se la scrittura fallisce e il blocco ha permesso DTR (Decrement/Transfer/Restore)
+      *     e i dati sono in formato Value Block, tenta Restore+Transfer via staging block.
+      *   - B3 (Trailer): validazione Access Bits, scritti per ultimi per non
+      *     invalidare l'autenticazione corrente a metà clone.
+      *
+      * @param args Stream di argomenti; il primo token è il nome del file dump.
+      */
+     void cmdClone(std::istringstream& args);
 };
