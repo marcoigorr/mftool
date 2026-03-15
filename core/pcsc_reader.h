@@ -109,6 +109,16 @@ public:
 	void disconnect();
 
 	/**
+	 * @brief Esegue un warm reset della carta tramite SCardReconnect.
+	 *
+	 * Utile per recuperare la comunicazione dopo operazioni MIFARE fallite
+	 * che lasciano la carta in stato HALT.
+	 *
+	 * @return true se il reset è riuscito, false altrimenti.
+	 */
+	bool reconnect();
+
+	/**
 	 * @brief Attende la comparsa di una carta e si connette, con timeout opzionale.
 	 *
 	 * Esegue polling ogni 500 ms finché non riesce a connettersi o scade il timeout.

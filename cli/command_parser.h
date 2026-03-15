@@ -88,7 +88,7 @@ private:
      *
      * @param args Stream di argomenti:
      *             -s <settore>   Settore target (0-15, obbligatorio).
-     *             -k <keyfile>   File chiavi (default: "keys/found.keys").
+     *             -k <keyfile>   File chiavi (default: "keys/std.keys").
      *             -t A|B         Tipo di chiave da usare.
      *             -key <12hex>   Chiave inline in formato hex (12 caratteri).
      */
@@ -139,8 +139,10 @@ private:
      *
      * Richiede che tutti i 16 settori siano già autenticati (es. dopo uno scan).
      * Inietta le chiavi note nel sector trailer per produrre un dump completo e reimportabile.
+     *
+     * @param args Stream di argomenti; supporta "-h" per mostrare l'help specifico.
      */
-    void cmdDumpFile();
+    void cmdDumpFile(std::istringstream& args);
 
     /**
      * @brief Legge e visualizza un file dump .mfd salvato in precedenza.

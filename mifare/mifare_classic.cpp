@@ -219,28 +219,36 @@ APDUResponse MifareClassic::writeBlock(int sector, int relBlock, const std::vect
         ((response.sw1 == 0x69 && response.sw2 == 0x82) ||
          (response.sw1 == 0x63 && response.sw2 == 0x00));
 
-    if (needs_reauth && reAuth(sector))
-    {
-        response = m_reader.transmit(apdu);
+    if (!needs_reauth || !reAuth(sector))
+        return response;
 
-        // Se la scrittura fallisce ancora, prova con l'altro tipo di chiave.
-        // Caso tipico: reAuth riesce con KeyA ma il trailer richiede KeyB per la scrittura.
-        if (!response.success)
-        {
-            const auto& auth = m_authState[sector];
-            const char other_type = (auth.keyType == 'A') ? 'B' : 'A';
-            const auto& other_key = (other_type == 'A') ? auth.keyA : auth.keyB;
-            const bool has_other = (other_type == 'A') ? auth.hasKeyA() : auth.hasKeyB();
+    // Retry dopo reAuth
+    response = m_reader.transmit(apdu);
+    if (response.success)
+        return response;
 
-            if (has_other && authenticate(sector, other_key, other_type))
-            {
-                Logger::debug("Write retry with Key" + std::string(1, other_type));
-                response = m_reader.transmit(apdu);
-            }
-        }
-    }
+    // Prova con l'altro tipo di chiave.
+    // reAuth riesce con KeyA ma il blocco richiede KeyB per la scrittura.
+    // Dopo un write fallito la carta entra in stato HALT:
+    // serve un warm reset (SCardReconnect) prima di riautenticare con l'altra chiave.
+    const auto& auth = m_authState[sector];
+    const char other_type = (auth.keyType == 'A') ? 'B' : 'A';
+    const auto& other_key = (other_type == 'A') ? auth.keyA : auth.keyB;
+    const bool has_other = (other_type == 'A') ? auth.hasKeyA() : auth.hasKeyB();
 
-    return response;
+    if (!has_other)
+        return response;
+
+    bool authed = authenticate(sector, other_key, other_type);
+
+    if (!authed && m_reader.reconnect())
+        authed = authenticate(sector, other_key, other_type);
+
+    if (!authed)
+        return response;
+
+    Logger::debug("Write retry with Key" + std::string(1, other_type));
+    return m_reader.transmit(apdu);
 }
 
 APDUResponse MifareClassic::readValue(int sector, int relBlock)
@@ -362,9 +370,11 @@ APDUResponse MifareClassic::restoreTransfer(
     const std::vector<uint8_t>& valueBlock)
 {
     const uint8_t stage_abs = static_cast<uint8_t>(toAbsBlock(stageSector, stageBlock));
-    const uint8_t dest_abs   = static_cast<uint8_t>(toAbsBlock(destSector, destBlock));
+    const uint8_t dest_abs  = static_cast<uint8_t>(toAbsBlock(destSector, destBlock));
+    const bool same_sector  = (stageSector == destSector);
 
-    Logger::debug("Cross-sector transfer: stage abs " + std::to_string(stage_abs)
+    Logger::debug(std::string(same_sector ? "Same-sector" : "Cross-sector")
+                + " transfer: stage abs " + std::to_string(stage_abs)
                 + " -> dest abs " + std::to_string(dest_abs));
 
     // Fase 1: Auth staging sector + backup + write
@@ -376,7 +386,7 @@ APDUResponse MifareClassic::restoreTransfer(
         return err;
     }
 
-    // Backup contenuto originale dello staging block (come MCT)
+    // Backup contenuto originale dello staging block
     auto backup_resp = readBlock(stageSector, stageBlock);
     std::vector<uint8_t> original_data;
     if (backup_resp.success && backup_resp.data.size() == BLOCK_SIZE)
@@ -392,39 +402,49 @@ APDUResponse MifareClassic::restoreTransfer(
     }
     Logger::debug("Staging write OK");
 
-    // Fase 2: RESTORE dallo staging (PN532 InDataExchange, MIFARE 0xC2)
-    auto restore_resp = pn532DataExchange({ 0xC2, stage_abs });
-    if (!restore_resp.success)
-    {
-        restore_resp.errorMessage = "RESTORE failed for abs block " + std::to_string(stage_abs);
-        Logger::error(restore_resp.errorMessage);
-        return restore_resp;
-    }
-    Logger::debug("RESTORE OK from abs " + std::to_string(stage_abs));
+    APDUResponse transfer_resp;
 
-    // Fase 3: Re-auth settore destinazione
-    if (!reAuth(destSector))
+    if (same_sector)
     {
-        APDUResponse err;
-        err.errorMessage = "Auth failed for destination sector " + std::to_string(destSector);
-        Logger::error(err.errorMessage);
-        return err;
+        // Fase 2a: ACR122U 5.5.3 Restore Value Block: FF D7 00 <src> 02 03 <dst>
+        transfer_resp = restoreTransfer(stageSector, stageBlock, destSector, destBlock);
+    }
+    else
+    {
+        // Fase 2b: RESTORE dallo staging (PN532 InDataExchange, MIFARE 0xC2)
+        auto restore_resp = pn532DataExchange({ 0xC2, stage_abs });
+        if (!restore_resp.success)
+        {
+            restore_resp.errorMessage = "RESTORE failed for abs block " + std::to_string(stage_abs);
+            Logger::error(restore_resp.errorMessage);
+            return restore_resp;
+        }
+        Logger::debug("RESTORE OK from abs " + std::to_string(stage_abs));
+
+        // Fase 3: Re-auth settore destinazione
+        if (!reAuth(destSector))
+        {
+            APDUResponse err;
+            err.errorMessage = "Auth failed for destination sector " + std::to_string(destSector);
+            Logger::error(err.errorMessage);
+            return err;
+        }
+
+        // Fase 4: TRANSFER alla destinazione (PN532 InDataExchange, MIFARE 0xB0)
+        transfer_resp = pn532DataExchange({ 0xB0, dest_abs });
+        if (!transfer_resp.success)
+        {
+            transfer_resp.errorMessage = "TRANSFER failed for abs block " + std::to_string(dest_abs);
+            Logger::error(transfer_resp.errorMessage);
+            return transfer_resp;
+        }
+        Logger::debug("TRANSFER OK to abs " + std::to_string(dest_abs));
     }
 
-    // Fase 4: TRANSFER alla destinazione (PN532 InDataExchange, MIFARE 0xB0)
-    auto transfer_resp = pn532DataExchange({ 0xB0, dest_abs });
-    if (!transfer_resp.success)
+    // Fase finale: Ripristina contenuto originale dello staging block
+    if (transfer_resp.success && !original_data.empty())
     {
-        transfer_resp.errorMessage = "TRANSFER failed for abs block " + std::to_string(dest_abs);
-        Logger::error(transfer_resp.errorMessage);
-        return transfer_resp;
-    }
-    Logger::debug("TRANSFER OK to abs " + std::to_string(dest_abs));
-
-    // Fase 5: Ripristina contenuto originale dello staging block
-    if (!original_data.empty())
-    {
-        if (stageSector != destSector)
+        if (!same_sector)
         {
             if (!reAuth(stageSector))
                 Logger::warning("Cannot re-auth staging sector for restore");

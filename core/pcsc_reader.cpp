@@ -153,6 +153,29 @@ void PCSCReader::disconnect()
     }
 }
 
+bool PCSCReader::reconnect()
+{
+    if (m_cardHandle == 0)
+        return false;
+
+    LONG status = SCardReconnect(
+        m_cardHandle,
+        cShareMode,
+        cPreferredProtocols,
+        SCARD_RESET_CARD,
+        &m_activeProtocol
+    );
+
+    if (status == SCARD_S_SUCCESS)
+    {
+        Logger::debug("Card reconnected (warm reset)");
+        return true;
+    }
+
+    Logger::debug("Reconnect failed: " + stringifyError(status));
+    return false;
+}
+
 bool PCSCReader::waitAndConnect(const std::string& readerName, int timeoutSeconds)
 {
     const auto start_time = std::chrono::high_resolution_clock::now();

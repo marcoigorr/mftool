@@ -209,11 +209,13 @@ public:
     APDUResponse restoreTransfer(int srcSector, int srcBlock, int dstSector, int dstBlock);
 
     /**
-     * @brief Cross-sector Value Block transfer seguendo il pattern MifareClassicTool.
+     * @brief Value Block transfer con backup/restore automatico dello staging block.
      *
-     * Scrive un value block nello staging, esegue RESTORE (PN532 InDataExchange 0xC2),
-     * ri-autentica il settore destinazione, esegue TRANSFER (PN532 InDataExchange 0xB0),
+     * Esegue backup dello staging, scrive il value block, effettua il transfer,
      * e ripristina il contenuto originale dello staging block.
+     *
+     * Same-sector (stageSector == destSector): usa ACR122U Restore Value Block (5.5.3).
+     * Cross-sector: usa PN532 InDataExchange RESTORE (0xC2) + TRANSFER (0xB0).
      *
      * Richiede che entrambi i settori siano già autenticati (tramite scan).
      * Lo staging block deve avere permessi di scrittura.
