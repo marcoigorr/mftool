@@ -1524,7 +1524,7 @@ void CommandParser::run()
     std::cout << "\n";
     std::cout << BOLD << "[mftool]" << RESET << " :: mifare toolkit\n";
     std::cout << "------------------------------------\n";
-    std::cout << GRAY << "build:  " << RESET << "v0.1\n";
+    std::cout << GRAY << "build:  " << RESET << "v1.0.0\n";
     std::cout << GRAY << "author: " << RESET << "marcoigorr\n";
     std::cout << "------------------------------------\n";
     std::cout << "type 'help' for commands, 'exit' to quit.\n";
