@@ -1,8 +1,14 @@
-# mftool
+<div align="center">
+
+# 🪐 marcoigorr - mftool
 
 Interactive command-line tool for reading, writing, dumping and cloning **MIFARE Classic 1K** NFC tags via PC/SC readers on Windows.
 
 Built with C++17, communicates through the PC/SC layer (WinSCard) and supports both native ACR122U APDUs and PN532 passthrough for advanced operations like cross-sector Value Block transfers.
+
+![License:GNU](https://img.shields.io/static/v1?label=license&message=GNU&color=blue)
+[![Latest Release](https://img.shields.io/github/v/release/marcoigorr/mftool)](https://github.com/marcoigorr/mftool/releases/latest)
+</div>
 
 ## Requirements
 
